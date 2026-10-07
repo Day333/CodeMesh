@@ -1,0 +1,78 @@
+{
+  "name": "codemesh",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Windows workspace for VS Code, terminals and folders",
+  "author": "CodeMesh contributors",
+  "license": "MIT",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "npm run build:electron && node scripts/dev.cjs",
+    "build:electron": "esbuild src/main/main.ts src/preload/preload.ts --bundle --platform=node --format=cjs --target=node22 --outdir=dist-electron --entry-names=[name] --external:electron --external:node-pty --external:koffi",
+    "icon": "node scripts/generate-icon.cjs",
+    "typecheck": "tsc --noEmit",
+    "format": "prettier --write src scripts index.html package.json vite.config.mts",
+    "format:check": "prettier --check src scripts index.html package.json vite.config.mts",
+    "build": "npm run typecheck && npm run build:electron && vite build",
+    "dist": "npm run build && electron-builder --win nsis",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
+    "koffi": "3.3.2",
+    "lucide-react": "1.52.0",
+    "node-pty": "1.1.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "electron": "44.6.0",
+    "electron-builder": "26.15.3",
+    "esbuild": "0.28.2",
+    "prettier": "^3.9.9",
+    "typescript": "7.0.2",
+    "vite": "8.3.3",
+    "vitest": "5.0.3"
+  },
+  "build": {
+    "appId": "dev.codemesh.desktop",
+    "productName": "CodeMesh",
+    "npmRebuild": false,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/*.js",
+      "assets/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/node-pty/**/*",
+      "node_modules/koffi/**/*",
+      "node_modules/@koromix/**/*"
+    ],
+    "win": {
+      "icon": "assets/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    }
+  }
+}
