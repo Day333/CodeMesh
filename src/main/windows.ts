@@ -312,6 +312,11 @@ export function setSessionWindowRule(id: string, rule: WindowRule): void {
   sessionRules.set(id, rule);
 }
 
+export function clearSessionWindowRulesForProject(projectId: string): void {
+  for (const [id, rule] of sessionRules)
+    if (rule.projectId === projectId) sessionRules.delete(id);
+}
+
 export function focusCodeWindow(id: string): boolean {
   const hwnd = liveHandles.get(id);
   if (!hwnd || !isWindow(hwnd)) return false;

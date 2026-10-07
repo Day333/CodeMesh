@@ -36,6 +36,7 @@ import type {
   TerminalSnapshot,
   WindowRole,
 } from "../shared/types";
+import { windowsForProject } from "../shared/matching";
 import { Workspace } from "./Workspace";
 
 const roleLabels: Record<WindowRole, string> = {
@@ -87,6 +88,7 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
   const [embedMode, setEmbedMode] = useState(false);
+  const [embeddedWindowId, setEmbeddedWindowId] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -109,8 +111,19 @@ export function App() {
   const leaveEmbed = useCallback(() => {
     void window.codemesh.releaseOverlayWindow().catch(reportError);
     setEmbedMode(false);
+    setEmbeddedWindowId(null);
     setFocusMode(false);
   }, [reportError]);
+
+  useEffect(() => {
+    if (
+      embedMode &&
+      !windowsForProject(windows, selectedProjectId).some(
+        (item) => item.id === embeddedWindowId,
+      )
+    )
+      leaveEmbed();
+  }, [embedMode, embeddedWindowId, selectedProjectId, windows, leaveEmbed]);
 
   const run = useCallback(
     async <T,>(
@@ -659,14 +672,26 @@ export function App() {
               onTileWindow={async (id) => {
                 if (embedMode) await window.codemesh.releaseOverlayWindow();
                 setEmbedMode(false);
+                setEmbeddedWindowId(null);
                 await window.codemesh.tileWindow(id);
                 setFocusMode(true);
               }}
               embedMode={embedMode}
               onEmbedCode={async (id) => {
-                await window.codemesh.prepareOverlayWindow(id);
+                if (
+                  !selectedProjectId ||
+                  !windowsForProject(windows, selectedProjectId).some(
+                    (item) => item.id === id,
+                  )
+                )
+                  throw new Error("先将此 VS Code 窗口关联到当前项目");
+                await window.codemesh.prepareOverlayWindow(
+                  id,
+                  selectedProjectId,
+                );
                 setFocusMode(true);
                 setEmbedMode(true);
+                setEmbeddedWindowId(id);
               }}
               onLeaveEmbed={leaveEmbed}
               onError={reportError}

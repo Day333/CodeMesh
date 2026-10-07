@@ -5,6 +5,7 @@ import path from "node:path";
 import { Store } from "./store";
 import { TerminalManager } from "./terminals";
 import {
+  clearSessionWindowRulesForProject,
   focusCodeWindow,
   hideOverlayCodeWindow,
   launchCode,
@@ -25,6 +26,7 @@ import type {
 import { runSmoke } from "./smoke";
 import { runOverlaySmoke } from "./overlay-smoke";
 import { readEditableFile, saveEditableFile } from "./editor-files";
+import { windowsForProject } from "../shared/matching";
 
 if (process.platform !== "win32")
   throw new Error("CodeMesh 目前仅支持 Windows");
@@ -108,6 +110,20 @@ function refreshWindows(): CodeWindow[] {
   return windows;
 }
 
+function requireProjectWindow(id: unknown, projectId: unknown): void {
+  if (
+    typeof id !== "string" ||
+    typeof projectId !== "string" ||
+    !store.get().projects.some((project) => project.id === projectId)
+  )
+    throw new Error("请先选择一个已添加的项目");
+  const windows = refreshWindows();
+  if (!windows.some((window) => window.id === id))
+    throw new Error("该 VS Code 窗口已关闭");
+  if (!windowsForProject(windows, projectId).some((window) => window.id === id))
+    throw new Error("该 VS Code 窗口不属于当前项目，请先关联项目");
+}
+
 function registerIpc(): void {
   ipcMain.handle("bootstrap", () => ({
     state: store.get(),
@@ -128,6 +144,7 @@ function registerIpc(): void {
   ipcMain.handle("project:remove", (_event, id: unknown) => {
     if (typeof id !== "string") throw new Error("无效项目");
     const result = store.removeProject(id);
+    clearSessionWindowRulesForProject(id);
     for (const terminal of terminals.list()) {
       if (terminal.projectId === id)
         terminals.updateMetadata(terminal.id, { projectId: null });
@@ -188,32 +205,32 @@ function registerIpc(): void {
     });
     mainWindow.focus();
   });
-  ipcMain.handle("windows:overlay:prepare", (event, id: unknown) => {
-    if (
-      event.sender !== mainWindow?.webContents ||
-      typeof id !== "string" ||
-      !mainWindow ||
-      !refreshWindows().some((item) => item.id === id)
-    )
-      throw new Error("该 VS Code 窗口已关闭");
-    const workArea = screen.getDisplayMatching(mainWindow.getBounds()).workArea;
-    if (workArea.width < 1450 || workArea.height < 700)
-      throw new Error("当前屏幕太窄，无法同时放下完整 VS Code 和终端");
-    mainWindow.maximize();
-    mainWindow.focus();
-  });
+  ipcMain.handle(
+    "windows:overlay:prepare",
+    (event, id: unknown, projectId: unknown) => {
+      if (event.sender !== mainWindow?.webContents || !mainWindow)
+        throw new Error("无效窗口请求");
+      requireProjectWindow(id, projectId);
+      const workArea = screen.getDisplayMatching(
+        mainWindow.getBounds(),
+      ).workArea;
+      if (workArea.width < 1450 || workArea.height < 700)
+        throw new Error("当前屏幕太窄，无法同时放下完整 VS Code 和终端");
+      mainWindow.maximize();
+      mainWindow.focus();
+    },
+  );
   ipcMain.handle(
     "windows:overlay:position",
-    async (event, id: unknown, rect: unknown) => {
+    async (event, id: unknown, projectId: unknown, rect: unknown) => {
       if (
         event.sender !== mainWindow?.webContents ||
-        typeof id !== "string" ||
         !mainWindow ||
-        !refreshWindows().some((item) => item.id === id) ||
         !rect ||
         typeof rect !== "object"
       )
         throw new Error("无效的 VS Code 内嵌请求");
+      requireProjectWindow(id, projectId);
       const input = rect as Record<string, unknown>;
       const { x, y, width, height } = input;
       const content = mainWindow.getContentBounds();
@@ -235,7 +252,7 @@ function registerIpc(): void {
         width: width as number,
         height: height as number,
       });
-      await overlayCodeWindow(id, physical);
+      await overlayCodeWindow(id as string, physical);
     },
   );
   ipcMain.handle("windows:overlay:release", async (event, id: unknown) => {
@@ -246,6 +263,17 @@ function registerIpc(): void {
     await releaseOverlayCodeWindow(id);
   });
   ipcMain.handle("windows:rule", (_event, id: unknown, rule: WindowRule) => {
+    if (
+      !rule ||
+      typeof rule !== "object" ||
+      (rule.projectId !== null &&
+        (typeof rule.projectId !== "string" ||
+          !store
+            .get()
+            .projects.some((project) => project.id === rule.projectId))) ||
+      !["view", "claude", "other"].includes(rule.role)
+    )
+      throw new Error("无效的窗口项目关联");
     const openWindows = refreshWindows();
     const window = openWindows.find((item) => item.id === id);
     if (!window) throw new Error("该 VS Code 窗口已关闭");
@@ -457,6 +485,7 @@ void app.whenReady().then(() => {
         output,
         process.env.CODEMESH_OVERLAY_SMOKE_SCREENSHOT,
         process.env.CODEMESH_OVERLAY_SMOKE_WINDOW_ID,
+        process.env.CODEMESH_OVERLAY_SMOKE_PROJECT_PATH,
       ).finally(() => app.quit());
     });
   }

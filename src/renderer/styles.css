@@ -1019,6 +1019,15 @@ select:focus-visible {
   color: var(--muted);
   font-size: 11px;
 }
+.workspace-project-context {
+  flex: 0 1 auto;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--accent);
+  font-size: 11px;
+}
 .workspace-switcher-row button {
   display: inline-flex;
   align-items: center;

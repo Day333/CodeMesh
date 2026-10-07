@@ -8,13 +8,30 @@ export async function runOverlaySmoke(
   output: string,
   screenshot?: string,
   targetId?: string,
+  projectPath?: string,
 ): Promise<void> {
   try {
+    if (!projectPath)
+      throw new Error("Overlay smoke requires an isolated project path");
     const id = await window.webContents.executeJavaScript(`(async () => {
       const bootstrap = await window.codemesh.bootstrap();
       const code = bootstrap.windows.find(item => item.id === ${JSON.stringify(targetId || "")} || item.title.includes(${JSON.stringify(targetId || "__no_test_window__")}));
       if (!code) throw new Error('No VS Code window available for overlay smoke');
-      const row = [...document.querySelectorAll('.workspace-window-action')].find(item => item.querySelector('button[title^="切换到 "]')?.title === '切换到 ' + code.title);
+      const state = await window.codemesh.addProject(${JSON.stringify(projectPath)});
+      const project = state.projects.find(item => item.path.toLowerCase() === ${JSON.stringify(projectPath.toLowerCase())});
+      if (!project) throw new Error('Overlay smoke project was not added');
+      await window.codemesh.setWindowRule(code.id, { projectId: project.id, role: 'other' });
+      for (let attempt = 0; attempt < 40; attempt++) {
+        const nav = [...document.querySelectorAll('.project-nav')].find(item => item.title.toLowerCase() === ${JSON.stringify(projectPath.toLowerCase())});
+        if (nav) { nav.click(); break; }
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      let row;
+      for (let attempt = 0; attempt < 40; attempt++) {
+        row = [...document.querySelectorAll('.workspace-window-action')].find(item => item.dataset.windowId === code.id);
+        if (row) break;
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
       const button = row?.querySelector('button[title="将完整桌面版 VS Code 显示在工作区面板中"]');
       if (!button) throw new Error('Embed button missing');
       button.click();

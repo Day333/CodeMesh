@@ -1,4 +1,13 @@
-import type { Project, WindowRule, WindowRole } from "./types";
+import type { CodeWindow, Project, WindowRule, WindowRole } from "./types";
+
+export function windowsForProject(
+  windows: CodeWindow[],
+  projectId: string | null,
+): CodeWindow[] {
+  return projectId
+    ? windows.filter((window) => window.projectId === projectId)
+    : [];
+}
 
 export function normalizePath(path: string): string {
   return path

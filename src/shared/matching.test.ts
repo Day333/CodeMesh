@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { matchWindow, normalizePath, titleKey } from "./matching";
-import type { Project } from "./types";
+import {
+  matchWindow,
+  normalizePath,
+  titleKey,
+  windowsForProject,
+} from "./matching";
+import type { CodeWindow, Project } from "./types";
 
 const projects: Project[] = [
   { id: "one", name: "Alpha", path: "C:\\Projects\\Alpha", createdAt: 0 },
@@ -8,6 +13,42 @@ const projects: Project[] = [
 ];
 
 describe("window association", () => {
+  it("only offers the selected project's VS Code windows", () => {
+    const windows: CodeWindow[] = [
+      {
+        id: "a",
+        title: "Alpha",
+        processId: 1,
+        projectId: "one",
+        role: "other",
+        association: "manual",
+      },
+      {
+        id: "b",
+        title: "Beta",
+        processId: 2,
+        projectId: "two",
+        role: "other",
+        association: "manual",
+      },
+      {
+        id: "c",
+        title: "Unknown",
+        processId: 3,
+        projectId: null,
+        role: "other",
+        association: "none",
+      },
+    ];
+    expect(windowsForProject(windows, "one").map((item) => item.id)).toEqual([
+      "a",
+    ]);
+    expect(windowsForProject(windows, "two").map((item) => item.id)).toEqual([
+      "b",
+    ]);
+    expect(windowsForProject(windows, null)).toEqual([]);
+  });
+
   it("matches an unambiguous project name from a VS Code title", () => {
     expect(matchWindow("Alpha - Visual Studio Code", projects).projectId).toBe(
       "one",

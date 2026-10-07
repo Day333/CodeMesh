@@ -59,6 +59,44 @@ export async function runSmoke(
         const tagged = await api.setWindowRule(bootstrap.windows[0].id, { projectId: addedProject.id, role: 'view' });
         windowRule = tagged.find(item => item.id === bootstrap.windows[0].id);
         if (windowRule?.projectId !== addedProject.id || windowRule.role !== 'view') throw new Error('Window rule was not applied');
+        const codeId = bootstrap.windows[0].id;
+        let ownWindow = null;
+        for (let attempt = 0; attempt < 40; attempt++) {
+          ownWindow = [...document.querySelectorAll('.workspace-window-action')].find(item => item.dataset.windowId === codeId);
+          if (ownWindow) break;
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        if (!ownWindow?.querySelector('button[title="将完整桌面版 VS Code 显示在工作区面板中"]')) throw new Error('Associated VS Code was not offered to its project');
+        const otherPath = ${JSON.stringify(path.join(cwd, "src"))};
+        const otherState = await api.addProject(otherPath);
+        const otherProject = otherState.projects.find(item => item.path.toLowerCase() === otherPath.toLowerCase());
+        if (!otherProject) throw new Error('Second test project was not added');
+        let otherNav = null;
+        for (let attempt = 0; attempt < 40; attempt++) {
+          otherNav = [...document.querySelectorAll('.project-nav')].find(item => item.title.toLowerCase() === otherPath.toLowerCase());
+          if (otherNav) break;
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        if (!otherNav) throw new Error('Second project navigation missing');
+        otherNav.click();
+        await new Promise(resolve => setTimeout(resolve, 100));
+        if ([...document.querySelectorAll('.workspace-window-action')].some(item => item.dataset.windowId === codeId)) throw new Error('Another project offered the wrong VS Code window');
+        let rejected = false;
+        try { await api.prepareOverlayWindow(codeId, otherProject.id); } catch { rejected = true; }
+        if (!rejected) throw new Error('Main process allowed cross-project embedding');
+        await api.setWindowRule(codeId, { projectId: otherProject.id, role: 'claude' });
+        let reassigned = false;
+        for (let attempt = 0; attempt < 40; attempt++) {
+          reassigned = [...document.querySelectorAll('.workspace-window-action')].some(item => item.dataset.windowId === codeId);
+          if (reassigned) break;
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        if (!reassigned) throw new Error('Reassigned VS Code was not offered to the new project');
+        projectNav.click();
+        await new Promise(resolve => setTimeout(resolve, 100));
+        if ([...document.querySelectorAll('.workspace-window-action')].some(item => item.dataset.windowId === codeId)) throw new Error('Old project kept a reassigned VS Code window');
+        await api.setWindowRule(codeId, { projectId: addedProject.id, role: 'view' });
+        await api.removeProject(otherProject.id);
       }
       await api.removeFavorite(${JSON.stringify(cwd)});
       async function checkShell(shell, command, marker) {

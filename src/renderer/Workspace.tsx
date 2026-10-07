@@ -19,6 +19,7 @@ import type {
 } from "../shared/types";
 import { TerminalView } from "./TerminalView";
 import { EditorSurface } from "./EditorSurface";
+import { windowsForProject } from "../shared/matching";
 
 type Target = { kind: "file" | "terminal" | "code"; id: string } | null;
 type Layout = "single" | "columns" | "rows";
@@ -79,6 +80,10 @@ export function Workspace({
   const embeddedCodeId = embedMode
     ? panes.find((target) => target?.kind === "code")?.id
     : null;
+  const projectWindows = windowsForProject(windows, selectedProjectId);
+  const selectedProject = projects.find(
+    (item) => item.id === selectedProjectId,
+  );
 
   useEffect(
     () => setNewTerminalProjectId(selectedProjectId),
@@ -216,7 +221,7 @@ export function Workspace({
   }, [embedMode]);
 
   useEffect(() => {
-    if (!embeddedCodeId || !codeHost.current) return;
+    if (!embeddedCodeId || !selectedProjectId || !codeHost.current) return;
     let cancelled = false;
     let pending = false;
     let frame = 0;
@@ -226,7 +231,7 @@ export function Workspace({
       if (rect.width < 800 || rect.height < 450) return;
       pending = true;
       void window.codemesh
-        .positionOverlayWindow(embeddedCodeId, {
+        .positionOverlayWindow(embeddedCodeId, selectedProjectId, {
           x: rect.x,
           y: rect.y,
           width: rect.width,
@@ -267,7 +272,7 @@ export function Workspace({
         .releaseOverlayWindow(embeddedCodeId)
         .catch(() => undefined);
     };
-  }, [embeddedCodeId, onError, onLeaveEmbed]);
+  }, [embeddedCodeId, selectedProjectId, onError, onLeaveEmbed]);
 
   function select(target: Target) {
     if (embedMode && target?.kind !== "code" && activePane === 0) {
@@ -341,9 +346,21 @@ export function Workspace({
       </div>
       <div className="workspace-switcher">
         <div className="workspace-switcher-row">
-          <span>VS Code</span>
-          {windows.map((item) => (
-            <div className="workspace-window-action" key={item.id}>
+          <span title={selectedProject?.name}>VS Code</span>
+          {selectedProject && (
+            <strong
+              className="workspace-project-context"
+              title={selectedProject.path}
+            >
+              {selectedProject.name}
+            </strong>
+          )}
+          {projectWindows.map((item) => (
+            <div
+              className="workspace-window-action"
+              data-window-id={item.id}
+              key={item.id}
+            >
               <button
                 title={`切换到 ${item.title}`}
                 onClick={() =>
@@ -394,7 +411,11 @@ export function Workspace({
               </button>
             </div>
           ))}
-          {!windows.length && <small>暂无窗口；从项目可新建 VS Code</small>}
+          {!selectedProjectId ? (
+            <small>先选择项目；在下方“VS Code 窗口”列表关联窗口</small>
+          ) : !projectWindows.length ? (
+            <small>此项目暂无 VS Code；在下方关联窗口或新建</small>
+          ) : null}
         </div>
         <div className="workspace-switcher-row">
           <span>编辑文件</span>

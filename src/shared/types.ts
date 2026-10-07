@@ -88,9 +88,10 @@ export interface CodeMeshApi {
   listWindows(): Promise<CodeWindow[]>;
   focusWindow(id: string): Promise<boolean>;
   tileWindow(id: string): Promise<void>;
-  prepareOverlayWindow(id: string): Promise<void>;
+  prepareOverlayWindow(id: string, projectId: string): Promise<void>;
   positionOverlayWindow(
     id: string,
+    projectId: string,
     bounds: { x: number; y: number; width: number; height: number },
   ): Promise<void>;
   releaseOverlayWindow(id?: string): Promise<void>;
