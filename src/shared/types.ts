@@ -95,6 +95,12 @@ export interface CodeMeshApi {
     bounds: { x: number; y: number; width: number; height: number },
   ): Promise<void>;
   releaseOverlayWindow(id?: string): Promise<void>;
+  positionNativeWindow(
+    id: string,
+    projectId: string,
+    bounds: { x: number; y: number; width: number; height: number },
+  ): Promise<void>;
+  releaseNativeWindow(id?: string): Promise<void>;
   onOverlaySync(callback: () => void): () => void;
   openCode(path: string): Promise<void>;
   listDirectory(path: string): Promise<DirectoryResult>;

@@ -39,6 +39,7 @@ export function Workspace({
   onUpdateTerminal,
   onTileWindow,
   embedMode,
+  nativeEmbed,
   onEmbedCode,
   onLeaveEmbed,
   onError,
@@ -62,7 +63,8 @@ export function Workspace({
   ) => void;
   onTileWindow: (id: string) => Promise<void>;
   embedMode: boolean;
-  onEmbedCode: (id: string) => Promise<void>;
+  nativeEmbed: boolean;
+  onEmbedCode: (id: string, native: boolean) => Promise<void>;
   onLeaveEmbed: () => void;
   onError: (error: unknown) => void;
 }) {
@@ -220,35 +222,70 @@ export function Workspace({
     }
   }, [embedMode]);
 
+  const embeddedPaneIndex = panes.findIndex(
+    (target) => target?.kind === "code" && target.id === embeddedCodeId,
+  );
   useEffect(() => {
     if (!embeddedCodeId || !selectedProjectId || !codeHost.current) return;
+    const position = nativeEmbed
+      ? window.codemesh.positionNativeWindow
+      : window.codemesh.positionOverlayWindow;
+    const release = nativeEmbed
+      ? window.codemesh.releaseNativeWindow
+      : window.codemesh.releaseOverlayWindow;
     let cancelled = false;
     let pending = false;
+    let resync = false;
     let frame = 0;
+    let lastSignature = "";
     const sync = () => {
-      if (cancelled || pending || !codeHost.current || document.hidden) return;
+      if (cancelled || !codeHost.current || document.hidden) return;
+      if (pending) {
+        resync = true;
+        return;
+      }
       const rect = codeHost.current.getBoundingClientRect();
-      if (rect.width < 800 || rect.height < 450) return;
+      if (
+        rect.width * window.devicePixelRatio < 800 ||
+        rect.height * window.devicePixelRatio < 450
+      )
+        return;
+      const signature = [
+        rect.x,
+        rect.y,
+        rect.width,
+        rect.height,
+        window.screenX,
+        window.screenY,
+        window.devicePixelRatio,
+      ].join(":");
+      if (signature === lastSignature) return;
       pending = true;
-      void window.codemesh
-        .positionOverlayWindow(embeddedCodeId, selectedProjectId, {
-          x: rect.x,
-          y: rect.y,
-          width: rect.width,
-          height: rect.height,
+      void position(embeddedCodeId, selectedProjectId, {
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height,
+      })
+        .then(() => {
+          lastSignature = signature;
         })
         .catch((error) => {
           if (!cancelled) {
+            if (String(error).includes("VS Code 面板空间不足")) {
+              return;
+            }
             onError(error);
             onLeaveEmbed();
           }
         })
         .finally(() => {
           pending = false;
-          if (cancelled)
-            void window.codemesh
-              .releaseOverlayWindow(embeddedCodeId)
-              .catch(() => undefined);
+          if (cancelled) void release(embeddedCodeId).catch(() => undefined);
+          else if (resync) {
+            resync = false;
+            schedule();
+          }
         });
     };
     const schedule = () => {
@@ -260,6 +297,7 @@ export function Workspace({
     const unsubscribe = window.codemesh.onOverlaySync(schedule);
     window.addEventListener("resize", schedule);
     window.addEventListener("scroll", schedule, true);
+    const poll = window.setInterval(schedule, 500);
     schedule();
     return () => {
       cancelled = true;
@@ -268,11 +306,34 @@ export function Workspace({
       unsubscribe();
       window.removeEventListener("resize", schedule);
       window.removeEventListener("scroll", schedule, true);
-      void window.codemesh
-        .releaseOverlayWindow(embeddedCodeId)
-        .catch(() => undefined);
+      window.clearInterval(poll);
+      void release(embeddedCodeId).catch(() => undefined);
     };
-  }, [embeddedCodeId, selectedProjectId, onError, onLeaveEmbed]);
+  }, [
+    embeddedCodeId,
+    embeddedPaneIndex,
+    selectedProjectId,
+    nativeEmbed,
+    onError,
+    onLeaveEmbed,
+  ]);
+
+  function showCodeInPane(item: CodeWindow, native: boolean) {
+    void onEmbedCode(item.id, native)
+      .then(() => {
+        setPanes(([, right]) => [
+          { kind: "code", id: item.id },
+          right?.kind === "terminal"
+            ? right
+            : terminals[0]
+              ? { kind: "terminal", id: terminals[0].id }
+              : null,
+        ]);
+        setLayout("columns");
+        setActivePane(1);
+      })
+      .catch(onError);
+  }
 
   function select(target: Target) {
     if (embedMode && target?.kind !== "code" && activePane === 0) {
@@ -370,24 +431,20 @@ export function Workspace({
                 <ExternalLink size={14} /> {item.title}
               </button>
               <button
+                title="将 VS Code 作为真正的原生子窗口嵌入工作区"
+                className={
+                  embeddedCodeId === item.id && nativeEmbed ? "active" : ""
+                }
+                onClick={() => showCodeInPane(item, true)}
+              >
+                内嵌
+              </button>
+              <button
                 title="把独立的 VS Code 窗口贴合到面板位置（非真正内嵌）"
-                className={embeddedCodeId === item.id ? "active" : ""}
-                onClick={() => {
-                  void onEmbedCode(item.id)
-                    .then(() => {
-                      setPanes(([, right]) => [
-                        { kind: "code", id: item.id },
-                        right?.kind === "terminal"
-                          ? right
-                          : terminals[0]
-                            ? { kind: "terminal", id: terminals[0].id }
-                            : null,
-                      ]);
-                      setLayout("columns");
-                      setActivePane(1);
-                    })
-                    .catch(onError);
-                }}
+                className={
+                  embeddedCodeId === item.id && !nativeEmbed ? "active" : ""
+                }
+                onClick={() => showCodeInPane(item, false)}
               >
                 贴合
               </button>

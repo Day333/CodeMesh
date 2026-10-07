@@ -88,6 +88,7 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
   const [embedMode, setEmbedMode] = useState(false);
+  const [nativeEmbed, setNativeEmbed] = useState(false);
   const [embeddedWindowId, setEmbeddedWindowId] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -109,8 +110,12 @@ export function App() {
     [notify],
   );
   const leaveEmbed = useCallback(() => {
-    void window.codemesh.releaseOverlayWindow().catch(reportError);
+    void Promise.all([
+      window.codemesh.releaseOverlayWindow(),
+      window.codemesh.releaseNativeWindow(),
+    ]).catch(reportError);
     setEmbedMode(false);
+    setNativeEmbed(false);
     setEmbeddedWindowId(null);
     setFocusMode(false);
   }, [reportError]);
@@ -670,14 +675,20 @@ export function App() {
               onDeleteTerminal={(id) => void deleteTerminal(id)}
               onUpdateTerminal={(id, input) => void updateTerminal(id, input)}
               onTileWindow={async (id) => {
-                if (embedMode) await window.codemesh.releaseOverlayWindow();
+                if (embedMode)
+                  await Promise.all([
+                    window.codemesh.releaseOverlayWindow(),
+                    window.codemesh.releaseNativeWindow(),
+                  ]);
                 setEmbedMode(false);
+                setNativeEmbed(false);
                 setEmbeddedWindowId(null);
                 await window.codemesh.tileWindow(id);
                 setFocusMode(true);
               }}
               embedMode={embedMode}
-              onEmbedCode={async (id) => {
+              nativeEmbed={nativeEmbed}
+              onEmbedCode={async (id, native) => {
                 if (
                   !selectedProjectId ||
                   !windowsForProject(windows, selectedProjectId).some(
@@ -685,12 +696,24 @@ export function App() {
                   )
                 )
                   throw new Error("先将此 VS Code 窗口关联到当前项目");
+                if (
+                  embedMode &&
+                  embeddedWindowId === id &&
+                  nativeEmbed === native
+                )
+                  return;
+                if (embedMode)
+                  await Promise.all([
+                    window.codemesh.releaseOverlayWindow(),
+                    window.codemesh.releaseNativeWindow(),
+                  ]);
                 await window.codemesh.prepareOverlayWindow(
                   id,
                   selectedProjectId,
                 );
                 setFocusMode(true);
                 setEmbedMode(true);
+                setNativeEmbed(native);
                 setEmbeddedWindowId(id);
               }}
               onLeaveEmbed={leaveEmbed}

@@ -29,6 +29,19 @@ const getWindowPid = user32.func(
   "uint32_t __stdcall GetWindowThreadProcessId(HWND hwnd, _Out_ uint32_t *pid)",
 );
 const isWindow = user32.func("bool __stdcall IsWindow(HWND hwnd)");
+const getParent = user32.func("HWND __stdcall GetParent(HWND hwnd)");
+const setParent = user32.func(
+  "HWND __stdcall SetParent(HWND child, HWND parent)",
+);
+const getWindowLongPtr = user32.func(
+  "intptr_t __stdcall GetWindowLongPtrW(HWND hwnd, int index)",
+);
+const setWindowLongPtr = user32.func(
+  "intptr_t __stdcall SetWindowLongPtrW(HWND hwnd, int index, intptr_t value)",
+);
+const screenToClient = user32.func(
+  "bool __stdcall ScreenToClient(HWND hwnd, void *point)",
+);
 const showWindow = user32.func(
   "bool __stdcall ShowWindow(HWND hwnd, int command)",
 );
@@ -73,6 +86,19 @@ let overlay: {
   bounds: WindowBounds;
   ready: boolean;
 } | null = null;
+let nativeEmbedded: {
+  id: string;
+  hwnd: bigint;
+  parent: bigint | null;
+  style: bigint;
+  original: WindowBounds;
+  maximized: boolean;
+  bounds: WindowBounds;
+} | null = null;
+let nativeReleasePromise: Promise<void> | null = null;
+const WS_CHILD = 0x40000000n;
+const WS_POPUP = 0x80000000n;
+const SWP_FRAMECHANGED = 0x0020;
 const SWP_NOACTIVATE = 0x0010;
 const SWP_SHOWWINDOW = 0x0040;
 
@@ -87,6 +113,183 @@ function readBounds(hwnd: bigint): WindowBounds {
     width: rect.readInt32LE(8) - x,
     height: rect.readInt32LE(12) - y,
   };
+}
+
+function toClientPoint(
+  host: bigint,
+  bounds: WindowBounds,
+): { x: number; y: number } {
+  const point = Buffer.alloc(8);
+  point.writeInt32LE(Math.round(bounds.x), 0);
+  point.writeInt32LE(Math.round(bounds.y), 4);
+  if (!screenToClient(host, point)) throw new Error("无法定位 VS Code 子窗口");
+  return { x: point.readInt32LE(0), y: point.readInt32LE(4) };
+}
+
+/** Hosts VS Code as an actual cross-process Win32 child. Never shrink it to 1px. */
+export async function embedNativeCodeWindow(
+  id: string,
+  host: bigint,
+  bounds: WindowBounds,
+): Promise<void> {
+  if (
+    !Object.values(bounds).every(Number.isFinite) ||
+    bounds.width < 800 ||
+    bounds.height < 450
+  )
+    throw new Error("内嵌区域太小，请放大 CodeMesh 窗口");
+  const hwnd = liveHandles.get(id);
+  if (!hwnd || !isWindow(hwnd)) throw new Error("该 VS Code 窗口已关闭");
+  if (nativeEmbedded?.id !== id && nativeEmbedded)
+    await releaseNativeCodeWindow();
+  if (nativeReleasePromise) await nativeReleasePromise;
+  if (!nativeEmbedded) {
+    const original = readBounds(hwnd);
+    const style = BigInt(getWindowLongPtr(hwnd, -16) as bigint);
+    const parent = getParent(hwnd) as bigint | null;
+    const maximized = Boolean(isZoomed(hwnd));
+    showWindow(hwnd, 9); // Restore before reparenting; preserve maximized state for release.
+    setWindowLongPtr(hwnd, -16, (style & ~WS_POPUP) | WS_CHILD);
+    setParent(hwnd, host);
+    if (getParent(hwnd) !== host) {
+      setParent(hwnd, parent);
+      setWindowLongPtr(hwnd, -16, style);
+      setWindowPos(
+        hwnd,
+        null,
+        original.x,
+        original.y,
+        original.width,
+        original.height,
+        SWP_FRAMECHANGED | SWP_SHOWWINDOW,
+      );
+      throw new Error("Windows 未能将 VS Code 变成子窗口");
+    }
+    nativeEmbedded = { id, hwnd, parent, style, original, maximized, bounds };
+  }
+  try {
+    const point = toClientPoint(host, bounds);
+    if (
+      !setWindowPos(
+        hwnd,
+        null,
+        point.x,
+        point.y,
+        Math.round(bounds.width),
+        Math.round(bounds.height),
+        SWP_FRAMECHANGED | SWP_SHOWWINDOW,
+      )
+    )
+      throw new Error("无法调整 VS Code 子窗口位置");
+    nativeEmbedded.bounds = bounds;
+  } catch (error) {
+    await releaseNativeCodeWindow(id);
+    throw error;
+  }
+}
+
+export async function releaseNativeCodeWindow(
+  expectedId?: string,
+): Promise<void> {
+  if (expectedId && nativeEmbedded?.id !== expectedId) return;
+  if (nativeReleasePromise) return nativeReleasePromise;
+  const record = nativeEmbedded;
+  nativeEmbedded = null;
+  if (!record || !isWindow(record.hwnd)) return;
+  nativeReleasePromise = (async () => {
+    setParent(record.hwnd, record.parent);
+    setWindowLongPtr(record.hwnd, -16, record.style);
+    const actualParent = getParent(record.hwnd) as bigint | null;
+    if ((actualParent ?? 0n) !== (record.parent ?? 0n))
+      throw new Error(
+        `Windows 未能释放 VS Code 子窗口：${String(actualParent)} / ${String(record.parent)}`,
+      );
+    const { x, y, width, height } = record.original;
+    setWindowPos(
+      record.hwnd,
+      null,
+      x,
+      y,
+      width,
+      height,
+      SWP_FRAMECHANGED | SWP_SHOWWINDOW,
+    );
+    // A foreign Electron window can react to the cross-monitor DPI change
+    // after SetParent returns. Reapply its original geometry once it settles.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    if (!isWindow(record.hwnd)) return;
+    setWindowPos(
+      record.hwnd,
+      null,
+      x,
+      y,
+      width,
+      height,
+      SWP_FRAMECHANGED | SWP_SHOWWINDOW,
+    );
+    if (record.maximized) showWindow(record.hwnd, 3);
+  })();
+  try {
+    await nativeReleasePromise;
+  } catch (error) {
+    if (isWindow(record.hwnd)) nativeEmbedded = record;
+    throw error;
+  } finally {
+    nativeReleasePromise = null;
+  }
+}
+
+export function inspectNativeCodeWindow(): {
+  id: string;
+  parented: boolean;
+  expected: WindowBounds;
+  actual: WindowBounds;
+} | null {
+  if (!nativeEmbedded || !isWindow(nativeEmbedded.hwnd)) return null;
+  return {
+    id: nativeEmbedded.id,
+    parented: Boolean(getParent(nativeEmbedded.hwnd)),
+    expected: { ...nativeEmbedded.bounds },
+    actual: readBounds(nativeEmbedded.hwnd),
+  };
+}
+
+/** Test-only snapshot of a known VS Code HWND before/after native parenting. */
+export function inspectCodeWindowHandle(id: string): {
+  exists: boolean;
+  parented: boolean;
+  childStyle: boolean;
+  visible: boolean;
+  maximized: boolean;
+  bounds: WindowBounds | null;
+} {
+  const hwnd = liveHandles.get(id);
+  if (!hwnd || !isWindow(hwnd))
+    return {
+      exists: false,
+      parented: false,
+      childStyle: false,
+      visible: false,
+      maximized: false,
+      bounds: null,
+    };
+  return {
+    exists: true,
+    parented: Boolean(getParent(hwnd)),
+    childStyle: Boolean(
+      BigInt(getWindowLongPtr(hwnd, -16) as bigint) & WS_CHILD,
+    ),
+    visible: Boolean(isWindowVisible(hwnd)),
+    maximized: Boolean(isZoomed(hwnd)),
+    bounds: readBounds(hwnd),
+  };
+}
+
+/** Only used by the opt-in disposable-window smoke test. */
+export function maximizeSmokeCodeWindow(id: string): void {
+  const hwnd = liveHandles.get(id);
+  if (!hwnd || !isWindow(hwnd)) throw new Error("测试用 VS Code 窗口已关闭");
+  showWindow(hwnd, 3);
 }
 
 export async function overlayCodeWindow(
@@ -279,6 +482,24 @@ function enumerate(): NativeWindow[] {
     });
     nextHandles.set(overlay.id, overlay.hwnd);
   }
+  if (
+    nativeEmbedded &&
+    isWindow(nativeEmbedded.hwnd) &&
+    !nextHandles.has(nativeEmbedded.id)
+  ) {
+    const length = getWindowTextLength(nativeEmbedded.hwnd) as number;
+    const buffer = Buffer.alloc((Math.max(1, length) + 1) * 2);
+    getWindowText(nativeEmbedded.hwnd, buffer, Math.max(1, length) + 1);
+    const pidBuffer = Buffer.alloc(4);
+    getWindowPid(nativeEmbedded.hwnd, pidBuffer);
+    result.push({
+      id: nativeEmbedded.id,
+      title:
+        buffer.toString("utf16le").replace(/\0.*$/s, "").trim() || "VS Code",
+      processId: pidBuffer.readUInt32LE(),
+    });
+    nextHandles.set(nativeEmbedded.id, nativeEmbedded.hwnd);
+  }
   liveHandles.clear();
   for (const [id, hwnd] of nextHandles) liveHandles.set(id, hwnd);
   for (const id of sessionRules.keys())
@@ -320,7 +541,7 @@ export function clearSessionWindowRulesForProject(projectId: string): void {
 export function focusCodeWindow(id: string): boolean {
   const hwnd = liveHandles.get(id);
   if (!hwnd || !isWindow(hwnd)) return false;
-  showWindow(hwnd, 9); // SW_RESTORE
+  if (nativeEmbedded?.id !== id) showWindow(hwnd, 9); // SW_RESTORE
   setForegroundWindow(hwnd);
   return getForegroundWindow() === hwnd;
 }

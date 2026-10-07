@@ -1236,7 +1236,7 @@ select:focus-visible {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 }
 .app.embed-mode .workspace-panes.layout-columns {
-  grid-template-columns: minmax(850px, 1.2fr) minmax(350px, 1fr);
+  grid-template-columns: minmax(800px, 1.8fr) minmax(300px, 1fr);
 }
 .workspace-panes.layout-rows {
   grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);

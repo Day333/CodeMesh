@@ -35,6 +35,9 @@ const api: CodeMeshApi = {
     ipcRenderer.invoke("windows:overlay:position", id, projectId, bounds),
   releaseOverlayWindow: (id) =>
     ipcRenderer.invoke("windows:overlay:release", id),
+  positionNativeWindow: (id, projectId, bounds) =>
+    ipcRenderer.invoke("windows:native:position", id, projectId, bounds),
+  releaseNativeWindow: (id) => ipcRenderer.invoke("windows:native:release", id),
   onOverlaySync: (callback) => listen("windows:overlay:sync", () => callback()),
   openCode: (folder) => ipcRenderer.invoke("code:open", folder),
   listDirectory: (folder) => ipcRenderer.invoke("directory:list", folder),

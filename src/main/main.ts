@@ -6,6 +6,7 @@ import { Store } from "./store";
 import { TerminalManager } from "./terminals";
 import {
   clearSessionWindowRulesForProject,
+  embedNativeCodeWindow,
   focusCodeWindow,
   hideOverlayCodeWindow,
   launchCode,
@@ -13,6 +14,7 @@ import {
   overlayCodeWindow,
   placeCodeWindow,
   raiseOverlayCodeWindow,
+  releaseNativeCodeWindow,
   releaseOverlayCodeWindow,
   setSessionWindowRule,
 } from "./windows";
@@ -262,6 +264,52 @@ function registerIpc(): void {
       throw new Error("无效窗口请求");
     await releaseOverlayCodeWindow(id);
   });
+  ipcMain.handle(
+    "windows:native:position",
+    async (event, id: unknown, projectId: unknown, rect: unknown) => {
+      if (
+        event.sender !== mainWindow?.webContents ||
+        !mainWindow ||
+        !rect ||
+        typeof rect !== "object"
+      )
+        throw new Error("无效的 VS Code 内嵌请求");
+      requireProjectWindow(id, projectId);
+      const input = rect as Record<string, unknown>;
+      const { x, y, width, height } = input;
+      const content = mainWindow.getContentBounds();
+      if (
+        ![x, y, width, height].every(
+          (value) => typeof value === "number" && Number.isFinite(value),
+        ) ||
+        (x as number) < 0 ||
+        (y as number) < 0 ||
+        (width as number) < 530 ||
+        (height as number) < 300 ||
+        (x as number) + (width as number) > content.width + 2 ||
+        (y as number) + (height as number) > content.height + 2
+      )
+        throw new Error("VS Code 面板空间不足，已保留原窗口");
+      const physical = screen.dipToScreenRect(mainWindow, {
+        x: content.x + (x as number),
+        y: content.y + (y as number),
+        width: width as number,
+        height: height as number,
+      });
+      await embedNativeCodeWindow(
+        id as string,
+        mainWindow.getNativeWindowHandle().readBigUInt64LE(),
+        physical,
+      );
+    },
+  );
+  ipcMain.handle("windows:native:release", async (event, id: unknown) => {
+    if (event.sender !== mainWindow?.webContents)
+      throw new Error("无效窗口请求");
+    if (id !== undefined && typeof id !== "string")
+      throw new Error("无效窗口请求");
+    await releaseNativeCodeWindow(id);
+  });
   ipcMain.handle("windows:rule", (_event, id: unknown, rule: WindowRule) => {
     if (
       !rule ||
@@ -439,6 +487,22 @@ function createWindow(): void {
   });
   mainWindow.once("ready-to-show", () => mainWindow?.show());
   mainWindow.on("focus", raiseOverlayCodeWindow);
+  let nativeReadyToClose = false;
+  mainWindow.on("close", (event) => {
+    if (nativeReadyToClose) return;
+    event.preventDefault();
+    void releaseNativeCodeWindow()
+      .then(() => {
+        nativeReadyToClose = true;
+        mainWindow?.close();
+      })
+      .catch((error) =>
+        dialog.showErrorBox(
+          "无法安全关闭 CodeMesh",
+          `VS Code 内嵌窗口尚未恢复，请先关闭内嵌模式后重试。\n${String(error)}`,
+        ),
+      );
+  });
   mainWindow.on("minimize", hideOverlayCodeWindow);
   mainWindow.on("restore", raiseOverlayCodeWindow);
   mainWindow.on("move", () => send("windows:overlay:sync", null));
@@ -486,6 +550,13 @@ void app.whenReady().then(() => {
         process.env.CODEMESH_OVERLAY_SMOKE_SCREENSHOT,
         process.env.CODEMESH_OVERLAY_SMOKE_WINDOW_ID,
         process.env.CODEMESH_OVERLAY_SMOKE_PROJECT_PATH,
+        process.env.CODEMESH_OVERLAY_SMOKE_NATIVE === "1",
+        process.env.CODEMESH_OVERLAY_SMOKE_RESET_SECONDARY === "1"
+          ? { x: -1600, y: 160, width: 1000, height: 700 }
+          : undefined,
+        process.env.CODEMESH_OVERLAY_SMOKE_QUIT_ATTACHED === "1",
+        process.env.CODEMESH_OVERLAY_SMOKE_MAXIMIZE === "1",
+        process.env.CODEMESH_OVERLAY_SMOKE_CODE_MAXIMIZED === "1",
       ).finally(() => app.quit());
     });
   }
@@ -509,10 +580,18 @@ app.on("before-quit", (event) => {
     event.preventDefault();
     if (overlayQuitStarted) return;
     overlayQuitStarted = true;
-    void releaseOverlayCodeWindow().finally(() => {
-      overlayReleasedBeforeQuit = true;
-      app.quit();
-    });
+    void Promise.all([releaseNativeCodeWindow(), releaseOverlayCodeWindow()])
+      .then(() => {
+        overlayReleasedBeforeQuit = true;
+        app.quit();
+      })
+      .catch((error) => {
+        overlayQuitStarted = false;
+        dialog.showErrorBox(
+          "无法安全退出 CodeMesh",
+          `VS Code 内嵌窗口尚未恢复，请先关闭内嵌模式后重试。\n${String(error)}`,
+        );
+      });
     return;
   }
   terminals?.closeAll();
