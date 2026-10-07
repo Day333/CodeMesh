@@ -27,6 +27,7 @@ function CodeSurface({
 }) {
   const video = useRef<HTMLVideoElement>(null);
   const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let disposed = false;
     let stream: MediaStream | null = null;
@@ -66,14 +67,27 @@ function CodeSurface({
       stream?.getTracks().forEach((track) => track.stop());
       if (video.current) video.current.srcObject = null;
     };
-  }, [id, onError]);
+  }, [id, onError, attempt]);
   return (
     <div className="code-surface" aria-label="VS Code 实时预览">
+      <video
+        ref={video}
+        autoPlay
+        muted
+        playsInline
+        style={{ display: failed ? "none" : "block" }}
+      />
       {failed ? (
-        <div className="workspace-empty">预览暂不可用，请在 VS Code 中打开</div>
-      ) : (
-        <video ref={video} autoPlay muted playsInline />
-      )}
+        <div className="workspace-empty">
+          <span>预览暂不可用。请先打开或还原 VS Code 窗口。</span>
+          <button
+            className="button button-secondary"
+            onClick={() => setAttempt((value) => value + 1)}
+          >
+            重试预览
+          </button>
+        </div>
+      ) : null}
       <span className="code-preview-label">
         实时预览 · 编辑请用面板右上角按钮
       </span>

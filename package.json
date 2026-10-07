@@ -1,6 +1,6 @@
 {
   "name": "codemesh",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "description": "Windows workspace for VS Code, terminals and folders",
   "author": "CodeMesh contributors",
