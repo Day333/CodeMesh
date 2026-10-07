@@ -3,11 +3,9 @@ import {
   ArrowLeft,
   ArrowRight,
   ArrowUp,
-  ChevronDown,
   ChevronRight,
   CircleHelp,
   Code2,
-  Command,
   ExternalLink,
   File,
   FileCode2,
@@ -38,7 +36,7 @@ import type {
   TerminalSnapshot,
   WindowRole,
 } from "../shared/types";
-import { TerminalView } from "./TerminalView";
+import { Workspace } from "./Workspace";
 
 const roleLabels: Record<WindowRole, string> = {
   view: "查看",
@@ -71,7 +69,6 @@ export function App() {
   const [state, setState] = useState<StoredState | null>(null);
   const [windows, setWindows] = useState<CodeWindow[]>([]);
   const [terminals, setTerminals] = useState<TerminalSnapshot[]>([]);
-  const [activeTerminal, setActiveTerminal] = useState<string | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
     null,
   );
@@ -81,7 +78,6 @@ export function App() {
   const [query, setQuery] = useState("");
   const [fileQuery, setFileQuery] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [shellMenuOpen, setShellMenuOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -96,6 +92,10 @@ export function App() {
       4500,
     );
   }, []);
+  const reportError = useCallback(
+    (error: unknown) => notify(errorMessage(error)),
+    [notify],
+  );
 
   const run = useCallback(
     async <T,>(
@@ -125,6 +125,15 @@ export function App() {
         ),
       ),
     );
+    const unsubData = window.codemesh.onTerminalData(({ id, data }) =>
+      setTerminals((items) =>
+        items.map((item) =>
+          item.id === id
+            ? { ...item, buffer: (item.buffer + data).slice(-120000) }
+            : item,
+        ),
+      ),
+    );
     void window.codemesh
       .bootstrap()
       .then((data) => {
@@ -132,7 +141,6 @@ export function App() {
         setState(data.state);
         setWindows(data.windows);
         setTerminals(data.terminals);
-        setActiveTerminal(data.terminals[0]?.id ?? null);
         setSelectedProjectId(data.state.projects[0]?.id ?? null);
         setBrowserPath(
           data.state.projects[0]?.path ?? data.state.favorites[0] ?? null,
@@ -150,6 +158,7 @@ export function App() {
       unsubWindows();
       unsubState();
       unsubExit();
+      unsubData();
     };
   }, [notify]);
 
@@ -276,7 +285,6 @@ export function App() {
     cwd = selectedPath,
     projectId = selectedProjectId,
   ) {
-    setShellMenuOpen(false);
     if (!cwd) {
       notify("请先选择项目或文件夹");
       return;
@@ -286,7 +294,6 @@ export function App() {
     );
     if (result) {
       setTerminals((items) => [...items, result]);
-      setActiveTerminal(result.id);
     }
   }
 
@@ -294,9 +301,6 @@ export function App() {
     await run(() => window.codemesh.closeTerminal(id));
     setTerminals((items) => {
       const next = items.filter((item) => item.id !== id);
-      setActiveTerminal((current) =>
-        current === id ? (next.at(-1)?.id ?? null) : current,
-      );
       return next;
     });
   }
@@ -479,19 +483,8 @@ export function App() {
           <div className="content-wrap">
             <section className="welcome">
               <div>
-                <div className="eyebrow">
-                  <span className="eyebrow-line" /> WORKSPACE CONTROL
-                </div>
-                <h1>
-                  {selectedProject
-                    ? selectedProject.name
-                    : "把工作，理出头绪。"}
-                </h1>
-                <p>
-                  {selectedProject
-                    ? selectedProject.path
-                    : "项目、窗口、终端和文件夹，都在这里。"}
-                </p>
+                <h1>{selectedProject ? selectedProject.name : "工作台"}</h1>
+                {selectedProject && <p>{selectedProject.path}</p>}
               </div>
               <div className="welcome-actions">
                 {selectedProject && (
@@ -556,6 +549,16 @@ export function App() {
                 </div>
               </div>
             </div>
+
+            <Workspace
+              windows={windows}
+              terminals={terminals}
+              settings={state.settings}
+              selectedPath={selectedPath}
+              onCreateTerminal={(shell) => void addTerminal(shell)}
+              onCloseTerminal={(id) => void closeTerminal(id)}
+              onError={reportError}
+            />
 
             <div className="panels">
               <section className="panel windows-panel">
@@ -797,98 +800,6 @@ export function App() {
               </section>
             </div>
 
-            <section className="panel terminal-panel">
-              <div className="terminal-header">
-                <div className="terminal-title">
-                  <span className="heading-icon">
-                    <SquareTerminal size={17} />
-                  </span>
-                  <h2>终端</h2>
-                  <span className="pill">{terminals.length}</span>
-                </div>
-                <div className="terminal-actions">
-                  <div className="shell-menu-wrap">
-                    <button
-                      className="button button-small"
-                      onClick={() => setShellMenuOpen((open) => !open)}
-                    >
-                      <Plus size={15} /> 新建终端 <ChevronDown size={14} />
-                    </button>
-                    {shellMenuOpen && (
-                      <div className="shell-menu">
-                        <button onClick={() => void addTerminal("powershell")}>
-                          <SquareTerminal size={16} /> PowerShell
-                        </button>
-                        <button onClick={() => void addTerminal("cmd")}>
-                          <Command size={16} /> 命令提示符
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-              {terminals.length ? (
-                <>
-                  <div className="terminal-tabs">
-                    {terminals.map((item) => (
-                      <button
-                        key={item.id}
-                        className={`terminal-tab ${item.id === activeTerminal ? "active" : ""}`}
-                        onClick={() => setActiveTerminal(item.id)}
-                      >
-                        <span
-                          className={`tab-dot ${item.alive ? "" : "stopped"}`}
-                        />
-                        <span>{item.title}</span>
-                        <small>{filename(item.cwd)}</small>
-                        <span
-                          className="tab-close"
-                          title="关闭终端"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            void closeTerminal(item.id);
-                          }}
-                        >
-                          <X size={14} />
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                  <div className="terminal-surface">
-                    {terminals.map((item) => (
-                      <TerminalView
-                        key={item.id}
-                        snapshot={item}
-                        active={item.id === activeTerminal}
-                        fontSize={state.settings.terminalFontSize}
-                        fontFamily={state.settings.terminalFontFamily}
-                        palette={state.settings.palette}
-                      />
-                    ))}
-                  </div>
-                </>
-              ) : (
-                <div className="terminal-blank">
-                  <div className="terminal-prompt">&gt;_</div>
-                  <strong>终端，就绪。</strong>
-                  <p>在项目目录打开 PowerShell 或命令提示符。</p>
-                  <div>
-                    <button
-                      className="button button-secondary"
-                      onClick={() => void addTerminal("powershell")}
-                    >
-                      <SquareTerminal size={16} /> PowerShell
-                    </button>
-                    <button
-                      className="button button-secondary"
-                      onClick={() => void addTerminal("cmd")}
-                    >
-                      <Command size={16} /> cmd
-                    </button>
-                  </div>
-                </div>
-              )}
-            </section>
             <footer className="footer">
               <span>CodeMesh · 专注本地工作流</span>
               <span>项目配置仅保存在这台电脑</span>

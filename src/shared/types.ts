@@ -44,6 +44,14 @@ export interface CodeWindow {
   projectId: string | null;
   role: WindowRole;
   association: "manual" | "matched" | "none";
+  embedded: boolean;
+}
+
+export interface EmbedBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 export interface DirectoryEntry {
@@ -81,6 +89,9 @@ export interface CodeMeshApi {
   setWindowRule(id: string, rule: WindowRule): Promise<CodeWindow[]>;
   listWindows(): Promise<CodeWindow[]>;
   focusWindow(id: string): Promise<boolean>;
+  embedWindow(id: string): Promise<void>;
+  positionWindow(id: string, bounds: EmbedBounds | null): Promise<void>;
+  releaseWindow(id: string): Promise<void>;
   openCode(path: string): Promise<void>;
   listDirectory(path: string): Promise<DirectoryResult>;
   openFile(path: string): Promise<void>;

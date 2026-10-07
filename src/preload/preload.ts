@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 import type {
   CodeMeshApi,
   CodeWindow,
+  EmbedBounds,
   Settings,
   StoredState,
   TerminalSnapshot,
@@ -28,6 +29,10 @@ const api: CodeMeshApi = {
     ipcRenderer.invoke("windows:rule", id, rule),
   listWindows: () => ipcRenderer.invoke("windows:list"),
   focusWindow: (id) => ipcRenderer.invoke("windows:focus", id),
+  embedWindow: (id) => ipcRenderer.invoke("windows:embed", id),
+  positionWindow: (id, bounds: EmbedBounds | null) =>
+    ipcRenderer.invoke("windows:position", id, bounds),
+  releaseWindow: (id) => ipcRenderer.invoke("windows:release", id),
   openCode: (folder) => ipcRenderer.invoke("code:open", folder),
   listDirectory: (folder) => ipcRenderer.invoke("directory:list", folder),
   openFile: (filename) => ipcRenderer.invoke("file:open", filename),

@@ -393,25 +393,11 @@ select:focus-visible {
   gap: 25px;
   margin-bottom: 30px;
 }
-.eyebrow {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  color: #81b7e7;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 2.4px;
-}
-.eyebrow-line {
-  height: 1px;
-  width: 18px;
-  background: #70d1db;
-}
 .welcome h1 {
   font-size: 30px;
   line-height: 1.17;
   letter-spacing: -0.7px;
-  margin: 13px 0 8px;
+  margin: 0 0 8px;
   font-weight: 700;
 }
 .welcome p {
@@ -904,6 +890,196 @@ select:focus-visible {
 }
 .terminal-host .xterm {
   height: 100%;
+}
+.workspace {
+  margin-bottom: 22px;
+  overflow: hidden;
+}
+.workspace-heading,
+.workspace-heading-title,
+.workspace-layout,
+.workspace-switcher-row,
+.workspace-pane-head {
+  display: flex;
+  align-items: center;
+}
+.workspace-heading {
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 17px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.workspace-heading-title {
+  gap: 9px;
+  min-width: 0;
+}
+.workspace-heading-title > svg {
+  color: var(--accent);
+}
+.workspace-heading h2 {
+  margin: 0;
+  font-size: 15px;
+}
+.workspace-heading-title span {
+  color: var(--muted);
+  font-size: 11px;
+  margin-left: 8px;
+}
+.workspace-layout {
+  gap: 4px;
+  background: var(--bg);
+  border-radius: 8px;
+  padding: 3px;
+}
+.workspace-layout button {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  padding: 6px 9px;
+  font-size: 11px;
+}
+.workspace-layout button.active {
+  background: var(--panel-2);
+  color: var(--text);
+}
+.workspace-switcher {
+  padding: 10px 15px;
+  border-bottom: 1px solid var(--border-soft);
+  display: grid;
+  gap: 7px;
+}
+.workspace-switcher-row {
+  gap: 7px;
+  min-width: 0;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+.workspace-switcher-row > span {
+  flex: 0 0 62px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+.workspace-switcher-row > small {
+  color: var(--muted);
+  font-size: 11px;
+}
+.workspace-switcher-row button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  max-width: 210px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--text);
+  background: var(--panel-2);
+  padding: 5px 8px;
+  font-size: 11px;
+}
+.workspace-switcher-row button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.workspace-switcher-row button:disabled {
+  opacity: 0.45;
+}
+.workspace-panes {
+  height: 495px;
+  display: grid;
+  min-height: 0;
+  gap: 7px;
+  padding: 8px;
+  background: var(--bg);
+}
+.workspace-panes.layout-columns {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.workspace-panes.layout-rows {
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  height: 680px;
+}
+.workspace-panes.layout-single {
+  grid-template-columns: minmax(0, 1fr);
+}
+.workspace-panes.layout-single .workspace-pane:nth-child(2) {
+  display: none;
+}
+.workspace-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #0a1324;
+}
+.workspace-pane.selected {
+  border-color: var(--accent);
+}
+.workspace-pane-head {
+  flex: 0 0 36px;
+  gap: 5px;
+  padding: 0 7px;
+  background: var(--panel-2);
+}
+.workspace-pane-head button {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 5px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 5px;
+  font-size: 11px;
+}
+.workspace-pane-head button:hover {
+  color: var(--text);
+  background: var(--border);
+}
+.workspace-pane-head strong {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 600;
+}
+.workspace-pane-body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+.workspace-pane-body .terminal-host,
+.code-surface {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.workspace-empty {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.workspace-hint {
+  margin: 0;
+  padding: 8px 15px 10px;
+  border-top: 1px solid var(--border-soft);
+  color: var(--muted);
+  font-size: 10px;
 }
 .terminal-blank {
   height: 210px;

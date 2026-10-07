@@ -2,7 +2,7 @@ import koffi from "koffi";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
-import type { CodeWindow, StoredState } from "../shared/types";
+import type { CodeWindow, EmbedBounds, StoredState } from "../shared/types";
 import type { WindowRule } from "../shared/types";
 import { matchWindow, titleKey } from "../shared/matching";
 
@@ -36,6 +36,25 @@ const setForegroundWindow = user32.func(
   "bool __stdcall SetForegroundWindow(HWND hwnd)",
 );
 const getForegroundWindow = user32.func("HWND __stdcall GetForegroundWindow()");
+const getParent = user32.func("HWND __stdcall GetParent(HWND hwnd)");
+const setParent = user32.func(
+  "HWND __stdcall SetParent(HWND child, HWND parent)",
+);
+const getWindowLongPtr = user32.func(
+  "intptr_t __stdcall GetWindowLongPtrW(HWND hwnd, int index)",
+);
+const setWindowLongPtr = user32.func(
+  "intptr_t __stdcall SetWindowLongPtrW(HWND hwnd, int index, intptr_t value)",
+);
+const getWindowRect = user32.func(
+  "bool __stdcall GetWindowRect(HWND hwnd, void *rect)",
+);
+const setWindowPos = user32.func(
+  "bool __stdcall SetWindowPos(HWND hwnd, HWND insertAfter, int x, int y, int width, int height, uint32_t flags)",
+);
+const postMessage = user32.func(
+  "bool __stdcall PostMessageW(HWND hwnd, uint32_t message, uintptr_t wParam, intptr_t lParam)",
+);
 const openProcess = kernel32.func(
   "HANDLE __stdcall OpenProcess(uint32_t access, bool inherit, uint32_t pid)",
 );
@@ -51,6 +70,24 @@ interface NativeWindow {
 }
 const liveHandles = new Map<string, bigint>();
 const sessionRules = new Map<string, WindowRule>();
+const embedded = new Map<
+  string,
+  {
+    hwnd: bigint;
+    parent: bigint | null;
+    style: bigint;
+    rect: number[];
+    bounds: EmbedBounds | null;
+  }
+>();
+const WS_CHILD = 0x40000000n;
+const WS_POPUP = 0x80000000n;
+const GWL_STYLE = -16;
+const SWP_NOZORDER = 0x0004;
+const SWP_NOACTIVATE = 0x0010;
+const SWP_FRAMECHANGED = 0x0020;
+const SWP_SHOWWINDOW = 0x0040;
+const SWP_HIDEWINDOW = 0x0080;
 
 function processImageName(pid: number): string | null {
   const handle = openProcess(0x1000, false, pid) as bigint | null;
@@ -88,6 +125,25 @@ function enumerate(): NativeWindow[] {
     nextHandles.set(id, hwnd);
     return true;
   }, 0);
+  // Reparented windows are no longer top-level, so EnumWindows cannot see them.
+  for (const [id, record] of embedded) {
+    if (!isWindow(record.hwnd)) {
+      embedded.delete(id);
+      continue;
+    }
+    const length = getWindowTextLength(record.hwnd) as number;
+    const buffer = Buffer.alloc((Math.max(1, length) + 1) * 2);
+    getWindowText(record.hwnd, buffer, Math.max(1, length) + 1);
+    const pidBuffer = Buffer.alloc(4);
+    getWindowPid(record.hwnd, pidBuffer);
+    result.push({
+      id,
+      title:
+        buffer.toString("utf16le").replace(/\0.*$/s, "").trim() || "VS Code",
+      processId: pidBuffer.readUInt32LE(),
+    });
+    nextHandles.set(id, record.hwnd);
+  }
   liveHandles.clear();
   for (const [id, hwnd] of nextHandles) liveHandles.set(id, hwnd);
   for (const id of sessionRules.keys())
@@ -105,6 +161,7 @@ export function listCodeWindows(state: StoredState): CodeWindow[] {
     );
   return live.map((window) => ({
     ...window,
+    embedded: embedded.has(window.id),
     ...matchWindow(
       window.title,
       state.projects,
@@ -124,9 +181,118 @@ export function setSessionWindowRule(id: string, rule: WindowRule): void {
 export function focusCodeWindow(id: string): boolean {
   const hwnd = liveHandles.get(id);
   if (!hwnd || !isWindow(hwnd)) return false;
-  showWindow(hwnd, 9); // SW_RESTORE
+  if (!embedded.has(id)) showWindow(hwnd, 9); // SW_RESTORE
   setForegroundWindow(hwnd);
   return getForegroundWindow() === hwnd;
+}
+
+/** Reparents an existing VS Code window only after the user selects it for a pane. */
+export function embedCodeWindow(id: string, host: bigint): void {
+  if (embedded.has(id)) return;
+  const hwnd = liveHandles.get(id);
+  if (!hwnd || !isWindow(hwnd)) throw new Error("该 VS Code 窗口已关闭");
+  const rect = Buffer.alloc(16);
+  if (!getWindowRect(hwnd, rect)) throw new Error("无法读取窗口位置");
+  const style = BigInt(getWindowLongPtr(hwnd, GWL_STYLE) as bigint);
+  const parent = getParent(hwnd) as bigint | null;
+  const oldRect = [0, 4, 8, 12].map((offset) => rect.readInt32LE(offset));
+  // SetParent leaves style unchanged; Win32 requires WS_CHILD for a hosted window.
+  setWindowLongPtr(hwnd, GWL_STYLE, (style & ~WS_POPUP) | WS_CHILD);
+  const previous = setParent(hwnd, host) as bigint | null;
+  if (!previous && parent) {
+    setWindowLongPtr(hwnd, GWL_STYLE, style);
+    throw new Error("无法嵌入 VS Code 窗口");
+  }
+  if (getParent(hwnd) !== host) {
+    setWindowLongPtr(hwnd, GWL_STYLE, style);
+    throw new Error("无法嵌入 VS Code 窗口（可能是 DPI 模式不兼容）");
+  }
+  embedded.set(id, { hwnd, parent, style, rect: oldRect, bounds: null });
+  setWindowPos(
+    hwnd,
+    null,
+    0,
+    0,
+    1,
+    1,
+    SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_HIDEWINDOW,
+  );
+}
+
+export function positionCodeWindow(
+  id: string,
+  bounds: EmbedBounds | null,
+): void {
+  const record = embedded.get(id);
+  if (!record || !isWindow(record.hwnd)) return;
+  if (!bounds) {
+    setWindowPos(
+      record.hwnd,
+      null,
+      0,
+      0,
+      1,
+      1,
+      SWP_NOZORDER | SWP_NOACTIVATE | SWP_HIDEWINDOW,
+    );
+    return;
+  }
+  const { x, y, width, height } = bounds;
+  if (
+    ![x, y, width, height].every(Number.isFinite) ||
+    width < 1 ||
+    height < 1 ||
+    width > 10000 ||
+    height > 10000
+  )
+    throw new Error("无效嵌入区域");
+  if (
+    !setWindowPos(
+      record.hwnd,
+      null,
+      Math.round(x),
+      Math.round(y),
+      Math.round(width),
+      Math.round(height),
+      SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+    )
+  )
+    throw new Error("无法调整 VS Code 窗口位置");
+  record.bounds = bounds;
+}
+
+export function restoreEmbeddedVisibility(): void {
+  for (const [id, record] of embedded)
+    if (record.bounds) positionCodeWindow(id, record.bounds);
+}
+
+export function releaseCodeWindow(id: string): void {
+  const record = embedded.get(id);
+  if (!record) return;
+  embedded.delete(id);
+  if (!isWindow(record.hwnd)) return;
+  setParent(record.hwnd, record.parent);
+  setWindowLongPtr(record.hwnd, GWL_STYLE, record.style);
+  const [left, top, right, bottom] = record.rect;
+  setWindowPos(
+    record.hwnd,
+    null,
+    left,
+    top,
+    right - left,
+    bottom - top,
+    SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_SHOWWINDOW,
+  );
+}
+
+export function releaseAllCodeWindows(): void {
+  for (const id of [...embedded.keys()]) releaseCodeWindow(id);
+}
+
+/** Only used by the opt-in disposable-window smoke test. */
+export function closeSmokeCodeWindow(id: string): void {
+  const hwnd = liveHandles.get(id);
+  if (hwnd && isWindow(hwnd)) postMessage(hwnd, 0x0010, 0, 0); // WM_CLOSE
 }
 
 function findCodeExe(): string | null {
