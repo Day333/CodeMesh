@@ -1,34 +1,14 @@
 import fs from "node:fs";
+import path from "node:path";
 import type { BrowserWindow } from "electron";
-import { closeSmokeCodeWindow, launchCode, listCodeWindows } from "./windows";
-import type { Store } from "./store";
 
 /** Runs against the actual packaged renderer and preload bridge. */
 export async function runSmoke(
   window: BrowserWindow,
   output: string,
   cwd: string,
-  store: Store,
 ): Promise<void> {
-  let scratchId: string | null = null;
   try {
-    if (process.env.CODEMESH_SMOKE_EMBED) {
-      const before = new Set(
-        listCodeWindows(store.get()).map((item) => item.id),
-      );
-      await launchCode(cwd);
-      for (let attempt = 0; attempt < 60; attempt++) {
-        const candidate = listCodeWindows(store.get()).find(
-          (item) => !before.has(item.id),
-        );
-        if (candidate) {
-          scratchId = candidate.id;
-          break;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 500));
-      }
-      if (!scratchId) throw new Error("Scratch VS Code window did not open");
-    }
     const result = await window.webContents.executeJavaScript(`(async () => {
       const api = window.codemesh;
       await new Promise(resolve => setTimeout(resolve, 300));
@@ -38,6 +18,31 @@ export async function runSmoke(
       const withProject = await api.addProject(${JSON.stringify(cwd)});
       const addedProject = withProject.projects.find(item => item.path.toLowerCase() === ${JSON.stringify(cwd.toLowerCase())});
       if (!addedProject) throw new Error('Project was not saved');
+      const editorFile = await api.readEditableFile(${JSON.stringify(path.join(cwd, "package.json"))});
+      if (!editorFile.content.includes('codemesh') || !editorFile.revision) throw new Error('Editor could not read a project file');
+      let projectNav = null;
+      for (let attempt = 0; attempt < 40; attempt++) {
+        projectNav = [...document.querySelectorAll('.project-nav')].find(item => item.title.toLowerCase() === ${JSON.stringify(cwd.toLowerCase())});
+        if (projectNav) break;
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      if (!projectNav) throw new Error('Project navigation missing');
+      projectNav.click();
+      let fileButton = null;
+      for (let attempt = 0; attempt < 40; attempt++) {
+        fileButton = [...document.querySelectorAll('.file-row')].find(item => item.title.includes('package.json'));
+        if (fileButton) break;
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      if (!fileButton) throw new Error('File browser did not show package.json');
+      fileButton.click();
+      let editor = null;
+      for (let attempt = 0; attempt < 40; attempt++) {
+        editor = document.querySelector('.workspace-pane.selected .editor-host .cm-content');
+        if (editor?.textContent?.includes('codemesh')) break;
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      if (!editor?.textContent?.includes('codemesh')) throw new Error('Editable file did not appear in workspace');
       const withFavorite = await api.addFavorite(${JSON.stringify(cwd)});
       if (!withFavorite.favorites.some(item => item.toLowerCase() === ${JSON.stringify(cwd.toLowerCase())})) throw new Error('Favorite was not saved');
       let windowRule = null;
@@ -70,33 +75,10 @@ export async function runSmoke(
       const defaultTerminal = await api.createTerminal({ projectId: null, cwd: '', shell: 'cmd' });
       if (!defaultTerminal.alive || !defaultTerminal.cwd) throw new Error('Default terminal directory unavailable');
       await api.closeTerminal(defaultTerminal.id);
-      let preview = null;
-      if (${JSON.stringify(scratchId)} !== null) {
-        const id = ${JSON.stringify(scratchId)};
-        const sourceId = await api.captureWindow(id);
-        if (!sourceId.startsWith('window:')) throw new Error('VS Code capture source missing');
-        const switchButton = document.querySelector('[data-window-id="' + id + '"]');
-        if (!switchButton) throw new Error('VS Code switch button missing');
-        switchButton.click();
-        let video = null;
-        for (let attempt = 0; attempt < 40; attempt++) {
-          video = document.querySelector('.workspace-pane.selected video');
-          if (video?.videoWidth > 0 && video?.videoHeight > 0) break;
-          await new Promise(resolve => setTimeout(resolve, 250));
-        }
-        if (!video?.videoWidth || !video?.videoHeight) throw new Error('VS Code live preview did not render');
-        await new Promise(resolve => setTimeout(resolve, ${Number(process.env.CODEMESH_SMOKE_VIEW_MS || 0)}));
-        const layoutButtons = document.querySelectorAll('.workspace-layout button');
-        layoutButtons[2]?.click();
-        await new Promise(resolve => setTimeout(resolve, 150));
-        if (!document.querySelector('.workspace-panes.layout-rows')) throw new Error('Rows layout did not activate');
-        const clear = document.querySelector('.workspace-pane.selected button[title="清空面板"]');
-        if (!clear) throw new Error('Clear pane control missing');
-        clear.click();
-        await new Promise(resolve => setTimeout(resolve, 150));
-        if (document.querySelector('.workspace-pane.selected video')) throw new Error('VS Code preview was not cleared');
-        preview = { sourceId, width: video.videoWidth, height: video.videoHeight };
-      }
+      const layoutButtons = document.querySelectorAll('.workspace-layout button');
+      layoutButtons[2]?.click();
+      await new Promise(resolve => setTimeout(resolve, 150));
+      if (!document.querySelector('.workspace-panes.layout-rows')) throw new Error('Rows layout did not activate');
       const knownTerminals = new Set((await api.bootstrap()).terminals.map(item => item.id));
       const newTerminal = document.querySelector('.workspace-add');
       if (!newTerminal || newTerminal.disabled) throw new Error('New terminal button unavailable without a project');
@@ -108,10 +90,11 @@ export async function runSmoke(
         await new Promise(resolve => setTimeout(resolve, 250));
       }
       if (!createdTerminal || !document.querySelector('.workspace-pane.selected .terminal-host')) throw new Error('New terminal did not appear in a pane');
+      if (!document.querySelector('.workspace-pane:first-child .editor-host')) throw new Error('Editor was lost while opening split terminal');
       const closeTerminalButton = document.querySelector('.workspace-pane.selected button[title="关闭终端"]');
       if (!closeTerminalButton) throw new Error('Terminal close button missing');
       closeTerminalButton.click();
-      return { heading, windows: bootstrap.windows.length, windowRuleApplied: !!windowRule, directoryPath: directory.path, directoryEntries: directory.entries.length, hasPackageJson: directory.entries.some(item => item.name === 'package.json'), powershell, cmd, defaultTerminal: defaultTerminal.cwd, uiTerminal: createdTerminal.cwd, preview };
+      return { heading, windows: bootstrap.windows.length, windowRuleApplied: !!windowRule, directoryPath: directory.path, directoryEntries: directory.entries.length, hasPackageJson: directory.entries.some(item => item.name === 'package.json'), editorFile: editorFile.path, powershell, cmd, defaultTerminal: defaultTerminal.cwd, uiTerminal: createdTerminal.cwd };
     })()`);
     fs.writeFileSync(
       output,
@@ -124,9 +107,5 @@ export async function runSmoke(
       JSON.stringify({ ok: false, error: String(error) }, null, 2),
       "utf8",
     );
-  } finally {
-    if (scratchId) {
-      closeSmokeCodeWindow(scratchId);
-    }
   }
 }

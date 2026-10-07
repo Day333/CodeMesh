@@ -1,11 +1,4 @@
-import {
-  app,
-  BrowserWindow,
-  desktopCapturer,
-  dialog,
-  ipcMain,
-  shell,
-} from "electron";
+import { app, BrowserWindow, dialog, ipcMain, screen, shell } from "electron";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -15,6 +8,7 @@ import {
   focusCodeWindow,
   launchCode,
   listCodeWindows,
+  placeCodeWindow,
   setSessionWindowRule,
 } from "./windows";
 import type {
@@ -25,6 +19,7 @@ import type {
   WindowRule,
 } from "../shared/types";
 import { runSmoke } from "./smoke";
+import { readEditableFile, saveEditableFile } from "./editor-files";
 
 if (process.platform !== "win32")
   throw new Error("CodeMesh 目前仅支持 Windows");
@@ -153,21 +148,36 @@ function registerIpc(): void {
     "windows:focus",
     (_event, id: unknown) => typeof id === "string" && focusCodeWindow(id),
   );
-  ipcMain.handle("windows:capture-source", async (event, id: unknown) => {
-    if (event.sender !== mainWindow?.webContents || typeof id !== "string")
+  ipcMain.handle("windows:tile", (event, id: unknown) => {
+    if (
+      event.sender !== mainWindow?.webContents ||
+      typeof id !== "string" ||
+      !mainWindow
+    )
       throw new Error("无效窗口请求");
     if (!refreshWindows().some((item) => item.id === id))
       throw new Error("该 VS Code 窗口已关闭");
-    const sources = await desktopCapturer.getSources({
-      types: ["window"],
-      thumbnailSize: { width: 0, height: 0 },
+    const workArea = screen.getDisplayMatching(mainWindow.getBounds()).workArea;
+    if (workArea.width < 1680 || workArea.height < 700)
+      throw new Error(
+        "屏幕空间不足，至少需要 1680×700 才能让两个窗口并排。可以使用 Alt+Tab 切换。",
+      );
+    const left = Math.floor(workArea.width / 2);
+    const right = workArea.width - left;
+    if (mainWindow.isMaximized()) mainWindow.unmaximize();
+    mainWindow.setBounds({
+      x: workArea.x,
+      y: workArea.y,
+      width: left,
+      height: workArea.height,
     });
-    const source = sources.find((item) => {
-      const match = /^window:(\d+):\d+$/.exec(item.id);
-      return match && BigInt(match[1]) === BigInt(id);
+    placeCodeWindow(id, {
+      x: workArea.x + left,
+      y: workArea.y,
+      width: right,
+      height: workArea.height,
     });
-    if (!source) throw new Error("Windows 未提供该窗口的画面预览");
-    return source.id;
+    mainWindow.focus();
   });
   ipcMain.handle("windows:rule", (_event, id: unknown, rule: WindowRule) => {
     const openWindows = refreshWindows();
@@ -195,6 +205,23 @@ function registerIpc(): void {
     const error = await shell.openPath(requireFile(filename));
     if (error) throw new Error(error);
   });
+  const editorRoots = () => [
+    ...store.get().projects.map((item) => item.path),
+    ...store.get().favorites,
+  ];
+  ipcMain.handle("editor:read", (event, filename: unknown) => {
+    if (event.sender !== mainWindow?.webContents)
+      throw new Error("无效文件请求");
+    return readEditableFile(filename, editorRoots());
+  });
+  ipcMain.handle(
+    "editor:save",
+    (event, filename: unknown, content: unknown, revision: unknown) => {
+      if (event.sender !== mainWindow?.webContents)
+        throw new Error("无效保存请求");
+      return saveEditableFile(filename, content, revision, editorRoots());
+    },
+  );
   ipcMain.handle(
     "terminal:create",
     (
@@ -253,7 +280,7 @@ function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1460,
     height: 940,
-    minWidth: 1020,
+    minWidth: 840,
     minHeight: 680,
     backgroundColor: "#080d17",
     title: "CodeMesh",
@@ -298,7 +325,6 @@ void app.whenReady().then(() => {
         mainWindow!,
         output,
         process.env.CODEMESH_SMOKE_CWD || process.cwd(),
-        store,
       ).finally(() => app.quit());
     });
   }

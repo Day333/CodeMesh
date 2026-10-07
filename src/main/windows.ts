@@ -35,6 +35,9 @@ const showWindow = user32.func(
 const setForegroundWindow = user32.func(
   "bool __stdcall SetForegroundWindow(HWND hwnd)",
 );
+const moveWindow = user32.func(
+  "bool __stdcall MoveWindow(HWND hwnd, int x, int y, int width, int height, bool repaint)",
+);
 const getForegroundWindow = user32.func("HWND __stdcall GetForegroundWindow()");
 const postMessage = user32.func(
   "bool __stdcall PostMessageW(HWND hwnd, uint32_t message, uintptr_t wParam, intptr_t lParam)",
@@ -130,6 +133,17 @@ export function focusCodeWindow(id: string): boolean {
   showWindow(hwnd, 9); // SW_RESTORE
   setForegroundWindow(hwnd);
   return getForegroundWindow() === hwnd;
+}
+
+export function placeCodeWindow(
+  id: string,
+  bounds: { x: number; y: number; width: number; height: number },
+): void {
+  const hwnd = liveHandles.get(id);
+  if (!hwnd || !isWindow(hwnd)) throw new Error("该 VS Code 窗口已关闭");
+  showWindow(hwnd, 9);
+  if (!moveWindow(hwnd, bounds.x, bounds.y, bounds.width, bounds.height, true))
+    throw new Error("Windows 未能调整 VS Code 窗口位置");
 }
 
 /** Only used by the opt-in disposable-window smoke test. */

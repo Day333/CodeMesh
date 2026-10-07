@@ -59,6 +59,12 @@ export interface DirectoryResult {
   entries: DirectoryEntry[];
 }
 
+export interface EditableFile {
+  path: string;
+  content: string;
+  revision: string;
+}
+
 export interface TerminalSnapshot extends TerminalDefinition {
   buffer: string;
   alive: boolean;
@@ -81,10 +87,16 @@ export interface CodeMeshApi {
   setWindowRule(id: string, rule: WindowRule): Promise<CodeWindow[]>;
   listWindows(): Promise<CodeWindow[]>;
   focusWindow(id: string): Promise<boolean>;
-  captureWindow(id: string): Promise<string>;
+  tileWindow(id: string): Promise<void>;
   openCode(path: string): Promise<void>;
   listDirectory(path: string): Promise<DirectoryResult>;
   openFile(path: string): Promise<void>;
+  readEditableFile(path: string): Promise<EditableFile>;
+  saveEditableFile(
+    path: string,
+    content: string,
+    revision: string,
+  ): Promise<EditableFile>;
   createTerminal(input: {
     projectId: string | null;
     cwd: string;

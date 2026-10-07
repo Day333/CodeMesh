@@ -72,6 +72,10 @@ export function App() {
   const [requestedTerminalId, setRequestedTerminalId] = useState<string | null>(
     null,
   );
+  const [requestedFile, setRequestedFile] = useState<{
+    path: string;
+    token: number;
+  } | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
     null,
   );
@@ -554,6 +558,7 @@ export function App() {
               windows={windows}
               terminals={terminals}
               requestedTerminalId={requestedTerminalId}
+              requestedFile={requestedFile}
               settings={state.settings}
               onCreateTerminal={(shell) => void addTerminal(shell)}
               onCloseTerminal={(id) => void closeTerminal(id)}
@@ -764,12 +769,26 @@ export function App() {
                           <FileRow
                             key={entry.path}
                             entry={entry}
-                            onOpen={() =>
-                              entry.isDirectory
-                                ? openFolder(entry.path)
-                                : void run(() =>
-                                    window.codemesh.openFile(entry.path),
-                                  )
+                            onOpen={() => {
+                              if (entry.isDirectory) {
+                                openFolder(entry.path);
+                              } else {
+                                setRequestedFile((previous) => ({
+                                  path: entry.path,
+                                  token: (previous?.token ?? 0) + 1,
+                                }));
+                                document
+                                  .querySelector(".workspace")
+                                  ?.scrollIntoView({
+                                    behavior: "smooth",
+                                    block: "start",
+                                  });
+                              }
+                            }}
+                            onExternalOpen={() =>
+                              void run(() =>
+                                window.codemesh.openFile(entry.path),
+                              )
                             }
                           />
                         ))}
@@ -985,33 +1004,52 @@ function WindowCard({
 function FileRow({
   entry,
   onOpen,
+  onExternalOpen,
 }: {
   entry: DirectoryEntry;
   onOpen: () => void;
+  onExternalOpen: () => void;
 }) {
   const isCode = /\.(ts|tsx|js|jsx|py|json|md|html|css|rs|go|java|cs)$/i.test(
     entry.name,
   );
   return (
-    <button className="file-row" onClick={onOpen} title={entry.path}>
-      <span className={`file-icon ${entry.isDirectory ? "folder" : ""}`}>
-        {entry.isDirectory ? (
-          <Folder size={17} />
-        ) : isCode ? (
-          <FileCode2 size={17} />
-        ) : (
-          <File size={17} />
-        )}
-      </span>
-      <span className="file-name">{entry.name}</span>
-      <span className="file-size">
-        {entry.isDirectory ? (
-          <ChevronRight size={15} />
-        ) : (
-          formatSize(entry.size)
-        )}
-      </span>
-    </button>
+    <div className="file-row-wrap">
+      <button
+        className="file-row"
+        onClick={onOpen}
+        title={
+          entry.isDirectory ? entry.path : `在 CodeMesh 编辑：${entry.path}`
+        }
+      >
+        <span className={`file-icon ${entry.isDirectory ? "folder" : ""}`}>
+          {entry.isDirectory ? (
+            <Folder size={17} />
+          ) : isCode ? (
+            <FileCode2 size={17} />
+          ) : (
+            <File size={17} />
+          )}
+        </span>
+        <span className="file-name">{entry.name}</span>
+        <span className="file-size">
+          {entry.isDirectory ? (
+            <ChevronRight size={15} />
+          ) : (
+            formatSize(entry.size)
+          )}
+        </span>
+      </button>
+      {!entry.isDirectory && (
+        <button
+          className="file-external"
+          title="用系统默认程序打开"
+          onClick={onExternalOpen}
+        >
+          <ExternalLink size={14} />
+        </button>
+      )}
+    </div>
   );
 }
 

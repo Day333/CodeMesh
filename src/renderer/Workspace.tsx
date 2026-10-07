@@ -1,104 +1,34 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Code2,
   Command,
   ExternalLink,
+  FileText,
   Plus,
+  Save,
   SquareTerminal,
   X,
 } from "lucide-react";
 import type {
   CodeWindow,
+  EditableFile,
   Settings,
   ShellKind,
   TerminalSnapshot,
 } from "../shared/types";
 import { TerminalView } from "./TerminalView";
+import { EditorSurface } from "./EditorSurface";
 
-type Target = { kind: "code" | "terminal"; id: string } | null;
+type Target = { kind: "file" | "terminal"; id: string } | null;
 type Layout = "single" | "columns" | "rows";
 
-function CodeSurface({
-  id,
-  onError,
-}: {
-  id: string;
-  onError: (error: unknown) => void;
-}) {
-  const video = useRef<HTMLVideoElement>(null);
-  const [failed, setFailed] = useState(false);
-  const [attempt, setAttempt] = useState(0);
-  useEffect(() => {
-    let disposed = false;
-    let stream: MediaStream | null = null;
-    setFailed(false);
-    void window.codemesh
-      .captureWindow(id)
-      .then((sourceId) =>
-        navigator.mediaDevices.getUserMedia({
-          audio: false,
-          video: {
-            mandatory: {
-              chromeMediaSource: "desktop",
-              chromeMediaSourceId: sourceId,
-            },
-          } as unknown as MediaTrackConstraints,
-        }),
-      )
-      .then((captured) => {
-        if (disposed) {
-          captured.getTracks().forEach((track) => track.stop());
-          return;
-        }
-        stream = captured;
-        if (video.current) {
-          video.current.srcObject = captured;
-          void video.current.play().catch(onError);
-        }
-      })
-      .catch((error) => {
-        if (!disposed) {
-          setFailed(true);
-          onError(error);
-        }
-      });
-    return () => {
-      disposed = true;
-      stream?.getTracks().forEach((track) => track.stop());
-      if (video.current) video.current.srcObject = null;
-    };
-  }, [id, onError, attempt]);
-  return (
-    <div className="code-surface" aria-label="VS Code 实时预览">
-      <video
-        ref={video}
-        autoPlay
-        muted
-        playsInline
-        style={{ display: failed ? "none" : "block" }}
-      />
-      {failed ? (
-        <div className="workspace-empty">
-          <span>预览暂不可用。请先打开或还原 VS Code 窗口。</span>
-          <button
-            className="button button-secondary"
-            onClick={() => setAttempt((value) => value + 1)}
-          >
-            重试预览
-          </button>
-        </div>
-      ) : null}
-      <span className="code-preview-label">
-        实时预览 · 编辑请用面板右上角按钮
-      </span>
-    </div>
-  );
-}
+type OpenDocument = EditableFile & { savedContent: string };
 
 export function Workspace({
   windows,
   terminals,
   requestedTerminalId,
+  requestedFile,
   settings,
   onCreateTerminal,
   onCloseTerminal,
@@ -107,6 +37,7 @@ export function Workspace({
   windows: CodeWindow[];
   terminals: TerminalSnapshot[];
   requestedTerminalId: string | null;
+  requestedFile: { path: string; token: number } | null;
   settings: Settings;
   onCreateTerminal: (shell: ShellKind) => void;
   onCloseTerminal: (id: string) => void;
@@ -115,11 +46,91 @@ export function Workspace({
   const [layout, setLayout] = useState<Layout>("columns");
   const [panes, setPanes] = useState<[Target, Target]>([null, null]);
   const [activePane, setActivePane] = useState<0 | 1>(0);
+  const [documents, setDocuments] = useState<OpenDocument[]>([]);
+  const savingPaths = useRef(new Set<string>());
+
+  const saveDocument = useCallback(
+    async (filename: string) => {
+      const document = documents.find((item) => item.path === filename);
+      if (
+        !document ||
+        document.content === document.savedContent ||
+        savingPaths.current.has(filename)
+      )
+        return;
+      savingPaths.current.add(filename);
+      try {
+        const saved = await window.codemesh.saveEditableFile(
+          document.path,
+          document.content,
+          document.revision,
+        );
+        setDocuments((items) =>
+          items.map((item) =>
+            item.path === filename
+              ? {
+                  ...item,
+                  revision: saved.revision,
+                  savedContent: saved.content,
+                }
+              : item,
+          ),
+        );
+      } catch (error) {
+        onError(error);
+      } finally {
+        savingPaths.current.delete(filename);
+      }
+    },
+    [documents, onError],
+  );
+
+  useEffect(() => {
+    if (!documents.some((item) => item.content !== item.savedContent)) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [documents]);
+
+  useEffect(() => {
+    if (!requestedFile) return;
+    let cancelled = false;
+    const existing = documents.find(
+      (item) => item.path.toLowerCase() === requestedFile.path.toLowerCase(),
+    );
+    if (existing) {
+      select({ kind: "file", id: existing.path });
+      return;
+    }
+    void window.codemesh
+      .readEditableFile(requestedFile.path)
+      .then((opened) => {
+        if (cancelled) return;
+        setDocuments((items) => [
+          ...items,
+          { ...opened, savedContent: opened.content },
+        ]);
+        select({ kind: "file", id: opened.path });
+      })
+      .catch((error) => {
+        if (!cancelled) onError(error);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // File requests are one-shot actions. Selecting a tab does not reload it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedFile]);
 
   useEffect(() => {
     if (!requestedTerminalId) return;
     const destination: 0 | 1 =
-      panes[activePane] && !panes[activePane === 0 ? 1 : 0]
+      layout !== "single" &&
+      panes[activePane] &&
+      !panes[activePane === 0 ? 1 : 0]
         ? activePane === 0
           ? 1
           : 0
@@ -134,16 +145,6 @@ export function Workspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestedTerminalId]);
 
-  useEffect(() => {
-    setPanes(([left, right]) => [
-      left?.kind === "code" && !windows.some((item) => item.id === left.id)
-        ? null
-        : left,
-      right?.kind === "code" && !windows.some((item) => item.id === right.id)
-        ? null
-        : right,
-    ]);
-  }, [windows]);
   useEffect(() => {
     setPanes(([left, right]) => [
       left?.kind === "terminal" &&
@@ -174,13 +175,27 @@ export function Workspace({
     });
   }
 
+  function closeDocument(filename: string) {
+    const document = documents.find((item) => item.path === filename);
+    if (
+      document?.content !== document?.savedContent &&
+      !window.confirm(`“${filename}”有未保存的修改，确定关闭吗？`)
+    )
+      return;
+    setDocuments((items) => items.filter((item) => item.path !== filename));
+    setPanes(([left, right]) => [
+      left?.kind === "file" && left.id === filename ? null : left,
+      right?.kind === "file" && right.id === filename ? null : right,
+    ]);
+  }
+
   return (
     <section className="workspace panel">
       <div className="workspace-heading">
         <div className="workspace-heading-title">
           <Code2 size={18} />
           <h2>工作区</h2>
-          <span>点击资源放入选中面板</span>
+          <span>在这里编辑文件，并与终端分屏</span>
         </div>
         <div className="workspace-layout" aria-label="分屏布局">
           <button
@@ -210,23 +225,54 @@ export function Workspace({
         <div className="workspace-switcher-row">
           <span>VS Code</span>
           {windows.map((item) => (
-            <button
-              key={item.id}
-              data-window-id={item.id}
-              title={item.title}
-              className={
-                panes[activePane]?.kind === "code" &&
-                panes[activePane]?.id === item.id
-                  ? "active"
-                  : ""
-              }
-              onClick={() => select({ kind: "code", id: item.id })}
-            >
-              <Code2 size={14} />
-              {item.title}
-            </button>
+            <div className="workspace-window-action" key={item.id}>
+              <button
+                title={`切换到 ${item.title}`}
+                onClick={() =>
+                  void window.codemesh.focusWindow(item.id).catch(onError)
+                }
+              >
+                <ExternalLink size={14} /> {item.title}
+              </button>
+              <button
+                title="与 CodeMesh 并排编辑"
+                onClick={() =>
+                  void window.codemesh.tileWindow(item.id).catch(onError)
+                }
+              >
+                并排
+              </button>
+            </div>
           ))}
-          {!windows.length && <small>暂无窗口；从项目新建后可预览</small>}
+          {!windows.length && <small>暂无窗口；从项目可新建 VS Code</small>}
+        </div>
+        <div className="workspace-switcher-row">
+          <span>编辑文件</span>
+          {documents.map((item) => (
+            <div className="workspace-file-tab" key={item.path}>
+              <button
+                title={item.path}
+                className={
+                  panes[activePane]?.kind === "file" &&
+                  panes[activePane]?.id === item.path
+                    ? "active"
+                    : ""
+                }
+                onClick={() => select({ kind: "file", id: item.path })}
+              >
+                <FileText size={14} /> {item.path.split(/[\\/]/).at(-1)}
+                {item.content !== item.savedContent ? " ●" : ""}
+              </button>
+              <button
+                title="关闭文件"
+                className="workspace-tab-close"
+                onClick={() => closeDocument(item.path)}
+              >
+                <X size={13} />
+              </button>
+            </div>
+          ))}
+          {!documents.length && <small>从下方文件浏览区点击文件即可编辑</small>}
         </div>
         <div className="workspace-switcher-row">
           <span>终端</span>
@@ -262,9 +308,9 @@ export function Workspace({
       <div className={`workspace-panes layout-${layout}`}>
         {([0, 1] as const).map((index) => {
           const target = panes[index];
-          const code =
-            target?.kind === "code"
-              ? windows.find((item) => item.id === target.id)
+          const document =
+            target?.kind === "file"
+              ? documents.find((item) => item.path === target.id)
               : null;
           const terminal =
             target?.kind === "terminal"
@@ -280,17 +326,16 @@ export function Workspace({
                 <button onClick={() => setActivePane(index)}>
                   面板 {index + 1}
                 </button>
-                <strong title={code?.title || terminal?.cwd}>
-                  {code?.title || terminal?.title || "选择 VS Code 或终端"}
+                <strong title={document?.path || terminal?.cwd}>
+                  {document?.path || terminal?.title || "选择文件或终端"}
                 </strong>
-                {code && (
+                {document && (
                   <button
-                    title="在 VS Code 中编辑"
-                    onClick={() =>
-                      void window.codemesh.focusWindow(code.id).catch(onError)
-                    }
+                    title="保存文件 (Ctrl+S)"
+                    disabled={document.content === document.savedContent}
+                    onClick={() => void saveDocument(document.path)}
                   >
-                    <ExternalLink size={14} />
+                    <Save size={14} />
                   </button>
                 )}
                 {terminal && (
@@ -316,7 +361,23 @@ export function Workspace({
                 )}
               </div>
               <div className="workspace-pane-body">
-                {code && <CodeSurface id={code.id} onError={onError} />}
+                {document && (
+                  <EditorSurface
+                    key={document.path}
+                    filename={document.path}
+                    initialContent={document.content}
+                    onChange={(content) =>
+                      setDocuments((items) =>
+                        items.map((item) =>
+                          item.path === document.path
+                            ? { ...item, content }
+                            : item,
+                        ),
+                      )
+                    }
+                    onSave={() => void saveDocument(document.path)}
+                  />
+                )}
                 {terminal && (
                   <TerminalView
                     snapshot={terminal}
@@ -326,10 +387,10 @@ export function Workspace({
                     palette={settings.palette}
                   />
                 )}
-                {!code && !terminal && (
+                {!document && !terminal && (
                   <div className="workspace-empty">
-                    <Code2 size={26} />
-                    <span>从上方选择窗口或终端</span>
+                    <FileText size={26} />
+                    <span>从文件浏览区打开文件，或从上方选择终端</span>
                   </div>
                 )}
               </div>
@@ -338,8 +399,8 @@ export function Workspace({
         })}
       </div>
       <p className="workspace-hint">
-        VS Code
-        在面板中显示实时预览；点击面板右上角按钮可切换到原窗口编辑。终端可直接输入。
+        CodeMesh 内可直接编辑并保存本地文本文件；VS Code 和 Claude Code
+        插件仍在原生窗口中运行，点击上方窗口标签切换。
       </p>
     </section>
   );
