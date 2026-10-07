@@ -58,6 +58,7 @@ export class TerminalManager {
       cwd,
       env: { ...process.env, TERM: "xterm-256color" } as Record<string, string>,
       useConpty: true,
+      useConptyDll: true,
     });
     const session: Session = {
       definition: { ...definition, cwd },

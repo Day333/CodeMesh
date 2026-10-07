@@ -85,6 +85,7 @@ export function App() {
   const [query, setQuery] = useState("");
   const [fileQuery, setFileQuery] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [focusMode, setFocusMode] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -334,7 +335,9 @@ export function App() {
     );
 
   return (
-    <div className={`app theme-${state.settings.palette}`}>
+    <div
+      className={`app theme-${state.settings.palette}${focusMode ? " focus-mode" : ""}`}
+    >
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-mark">
@@ -459,6 +462,14 @@ export function App() {
             <strong>{selectedProject?.name ?? "总览"}</strong>
           </div>
           <div className="topbar-actions">
+            {focusMode && (
+              <button
+                className="button button-secondary button-small"
+                onClick={() => setFocusMode(false)}
+              >
+                显示概览
+              </button>
+            )}
             <div className="global-search">
               <Search size={16} />
               <input
@@ -562,6 +573,10 @@ export function App() {
               settings={state.settings}
               onCreateTerminal={(shell) => void addTerminal(shell)}
               onCloseTerminal={(id) => void closeTerminal(id)}
+              onTileWindow={async (id) => {
+                await window.codemesh.tileWindow(id);
+                setFocusMode(true);
+              }}
               onError={reportError}
             />
 
@@ -911,6 +926,9 @@ export function App() {
                     )
                   }
                 />
+                <span>
+                  含图标的 PowerShell 提示符推荐使用 MesloLGM Nerd Font Mono。
+                </span>
               </label>
               <p className="settings-note">
                 项目、收藏夹和窗口标签保存在本机应用数据目录，不会上传到

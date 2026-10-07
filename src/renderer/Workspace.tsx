@@ -32,6 +32,7 @@ export function Workspace({
   settings,
   onCreateTerminal,
   onCloseTerminal,
+  onTileWindow,
   onError,
 }: {
   windows: CodeWindow[];
@@ -41,6 +42,7 @@ export function Workspace({
   settings: Settings;
   onCreateTerminal: (shell: ShellKind) => void;
   onCloseTerminal: (id: string) => void;
+  onTileWindow: (id: string) => Promise<void>;
   onError: (error: unknown) => void;
 }) {
   const [layout, setLayout] = useState<Layout>("columns");
@@ -248,12 +250,22 @@ export function Workspace({
                 <ExternalLink size={14} /> {item.title}
               </button>
               <button
-                title="与 CodeMesh 并排编辑"
-                onClick={() =>
-                  void window.codemesh.tileWindow(item.id).catch(onError)
-                }
+                title="原生 VS Code 在右侧、CodeMesh 工作区在左侧"
+                onClick={() => {
+                  void onTileWindow(item.id)
+                    .then(() => {
+                      const visibleTerminal = panes.find(
+                        (target) => target?.kind === "terminal",
+                      );
+                      if (visibleTerminal)
+                        setPanes(([left, right]) => [visibleTerminal, right]);
+                      setActivePane(0);
+                      setLayout("single");
+                    })
+                    .catch(onError);
+                }}
               >
-                并排
+                同屏
               </button>
             </div>
           ))}

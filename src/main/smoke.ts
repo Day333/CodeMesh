@@ -14,6 +14,7 @@ export async function runSmoke(
       await new Promise(resolve => setTimeout(resolve, 300));
       const heading = document.querySelector('h1')?.textContent || '';
       const bootstrap = await api.bootstrap();
+      if (!bootstrap.state.settings.terminalFontFamily.includes('MesloLGM Nerd Font Mono')) throw new Error('Nerd Font default not applied');
       const directory = await api.listDirectory(${JSON.stringify(cwd)});
       const withProject = await api.addProject(${JSON.stringify(cwd)});
       const addedProject = withProject.projects.find(item => item.path.toLowerCase() === ${JSON.stringify(cwd.toLowerCase())});
@@ -94,7 +95,7 @@ export async function runSmoke(
       const closeTerminalButton = document.querySelector('.workspace-pane.selected button[title="关闭终端"]');
       if (!closeTerminalButton) throw new Error('Terminal close button missing');
       closeTerminalButton.click();
-      return { heading, windows: bootstrap.windows.length, windowRuleApplied: !!windowRule, directoryPath: directory.path, directoryEntries: directory.entries.length, hasPackageJson: directory.entries.some(item => item.name === 'package.json'), editorFile: editorFile.path, powershell, cmd, defaultTerminal: defaultTerminal.cwd, uiTerminal: createdTerminal.cwd };
+      return { heading, fontFamily: bootstrap.state.settings.terminalFontFamily, windows: bootstrap.windows.length, windowRuleApplied: !!windowRule, directoryPath: directory.path, directoryEntries: directory.entries.length, hasPackageJson: directory.entries.some(item => item.name === 'package.json'), editorFile: editorFile.path, powershell, cmd, defaultTerminal: defaultTerminal.cwd, uiTerminal: createdTerminal.cwd };
     })()`);
     fs.writeFileSync(
       output,

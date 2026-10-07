@@ -1144,6 +1144,34 @@ select:focus-visible {
   color: var(--muted);
   font-size: 10px;
 }
+.app.focus-mode .sidebar,
+.app.focus-mode .welcome,
+.app.focus-mode .stats,
+.app.focus-mode .panels,
+.app.focus-mode .workspace-hint {
+  display: none;
+}
+.app.focus-mode .content-scroll {
+  overflow: hidden;
+}
+.app.focus-mode .content-wrap {
+  height: 100%;
+  max-width: none;
+  padding: 8px;
+  display: flex;
+}
+.app.focus-mode .workspace {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+}
+.app.focus-mode .workspace-panes,
+.app.focus-mode .workspace-panes.layout-rows {
+  flex: 1;
+  height: auto;
+}
 .terminal-blank {
   height: 210px;
   display: flex;

@@ -11,6 +11,10 @@ import type {
   WindowRule,
 } from "../shared/types";
 import { normalizePath, titleKey } from "../shared/matching";
+import {
+  DEFAULT_TERMINAL_FONT,
+  migrateTerminalFont,
+} from "../shared/terminal-font";
 
 const defaults: StoredState = {
   version: 1,
@@ -20,7 +24,7 @@ const defaults: StoredState = {
   terminals: [],
   settings: {
     terminalFontSize: 14,
-    terminalFontFamily: "Cascadia Code, Consolas, monospace",
+    terminalFontFamily: DEFAULT_TERMINAL_FONT,
     palette: "midnight",
   },
 };
@@ -55,7 +59,13 @@ export class Store {
             ? parsed.windowRules
             : {},
         terminals: Array.isArray(parsed.terminals) ? parsed.terminals : [],
-        settings: { ...defaults.settings, ...parsed.settings },
+        settings: {
+          ...defaults.settings,
+          ...parsed.settings,
+          terminalFontFamily: migrateTerminalFont(
+            parsed.settings?.terminalFontFamily,
+          ),
+        },
       };
     } catch {
       this.data = structuredClone(defaults);
