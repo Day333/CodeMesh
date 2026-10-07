@@ -14,6 +14,14 @@ export async function runSmoke(
       await new Promise(resolve => setTimeout(resolve, 300));
       const heading = document.querySelector('h1')?.textContent || '';
       const bootstrap = await api.bootstrap();
+      const sidebarToggle = document.querySelector('.breadcrumb-workspace');
+      if (!sidebarToggle) throw new Error('Workspace sidebar toggle missing');
+      sidebarToggle.click();
+      await new Promise(resolve => setTimeout(resolve, 80));
+      if (!document.querySelector('.app.sidebar-collapsed') || getComputedStyle(document.querySelector('.sidebar')).display !== 'none') throw new Error('Sidebar did not collapse');
+      sidebarToggle.click();
+      await new Promise(resolve => setTimeout(resolve, 80));
+      if (document.querySelector('.app.sidebar-collapsed') || getComputedStyle(document.querySelector('.sidebar')).display === 'none') throw new Error('Sidebar did not expand');
       if (!bootstrap.state.settings.terminalFontFamily.includes('MesloLGM Nerd Font Mono')) throw new Error('Nerd Font default not applied');
       const directory = await api.listDirectory(${JSON.stringify(cwd)});
       const withProject = await api.addProject(${JSON.stringify(cwd)});

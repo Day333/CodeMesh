@@ -86,6 +86,8 @@ export function App() {
   const [fileQuery, setFileQuery] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
+  const [embedMode, setEmbedMode] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -104,6 +106,11 @@ export function App() {
     (error: unknown) => notify(errorMessage(error)),
     [notify],
   );
+  const leaveEmbed = useCallback(() => {
+    void window.codemesh.releaseOverlayWindow().catch(reportError);
+    setEmbedMode(false);
+    setFocusMode(false);
+  }, [reportError]);
 
   const run = useCallback(
     async <T,>(
@@ -376,7 +383,7 @@ export function App() {
 
   return (
     <div
-      className={`app theme-${state.settings.palette}${focusMode ? " focus-mode" : ""}`}
+      className={`app theme-${state.settings.palette}${focusMode ? " focus-mode" : ""}${embedMode ? " embed-mode" : ""}${sidebarCollapsed ? " sidebar-collapsed" : ""}`}
     >
       <aside className="sidebar">
         <div className="brand">
@@ -388,7 +395,13 @@ export function App() {
             <span>你的工作空间</span>
           </div>
         </div>
-        <div className="sidebar-label top-label">工作台</div>
+        <button
+          className="sidebar-label top-label sidebar-collapse-button"
+          title="收起左侧列表"
+          onClick={() => setSidebarCollapsed(true)}
+        >
+          工作台 <ChevronRight size={13} />
+        </button>
         <button
           className={`nav-item ${selectedProjectId === null ? "selected" : ""}`}
           onClick={() => {
@@ -497,7 +510,21 @@ export function App() {
       <main className="main">
         <header className="topbar">
           <div className="breadcrumbs">
-            <span>工作台</span>
+            <button
+              className="breadcrumb-workspace"
+              title={sidebarCollapsed ? "展开左侧列表" : "收起左侧列表"}
+              aria-label={sidebarCollapsed ? "展开左侧列表" : "收起左侧列表"}
+              aria-expanded={!sidebarCollapsed && !focusMode}
+              onClick={() => {
+                if (focusMode) {
+                  if (embedMode) leaveEmbed();
+                  else setFocusMode(false);
+                  setSidebarCollapsed(false);
+                } else setSidebarCollapsed((current) => !current);
+              }}
+            >
+              工作台
+            </button>
             <ChevronRight size={14} />
             <strong>{selectedProject?.name ?? "总览"}</strong>
           </div>
@@ -505,7 +532,10 @@ export function App() {
             {focusMode && (
               <button
                 className="button button-secondary button-small"
-                onClick={() => setFocusMode(false)}
+                onClick={() => {
+                  if (embedMode) leaveEmbed();
+                  else setFocusMode(false);
+                }}
               >
                 显示概览
               </button>
@@ -627,9 +657,18 @@ export function App() {
               onDeleteTerminal={(id) => void deleteTerminal(id)}
               onUpdateTerminal={(id, input) => void updateTerminal(id, input)}
               onTileWindow={async (id) => {
+                if (embedMode) await window.codemesh.releaseOverlayWindow();
+                setEmbedMode(false);
                 await window.codemesh.tileWindow(id);
                 setFocusMode(true);
               }}
+              embedMode={embedMode}
+              onEmbedCode={async (id) => {
+                await window.codemesh.prepareOverlayWindow(id);
+                setFocusMode(true);
+                setEmbedMode(true);
+              }}
+              onLeaveEmbed={leaveEmbed}
               onError={reportError}
             />
 

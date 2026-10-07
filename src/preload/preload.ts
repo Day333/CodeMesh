@@ -29,6 +29,13 @@ const api: CodeMeshApi = {
   listWindows: () => ipcRenderer.invoke("windows:list"),
   focusWindow: (id) => ipcRenderer.invoke("windows:focus", id),
   tileWindow: (id) => ipcRenderer.invoke("windows:tile", id),
+  prepareOverlayWindow: (id) =>
+    ipcRenderer.invoke("windows:overlay:prepare", id),
+  positionOverlayWindow: (id, bounds) =>
+    ipcRenderer.invoke("windows:overlay:position", id, bounds),
+  releaseOverlayWindow: (id) =>
+    ipcRenderer.invoke("windows:overlay:release", id),
+  onOverlaySync: (callback) => listen("windows:overlay:sync", () => callback()),
   openCode: (folder) => ipcRenderer.invoke("code:open", folder),
   listDirectory: (folder) => ipcRenderer.invoke("directory:list", folder),
   openFile: (filename) => ipcRenderer.invoke("file:open", filename),

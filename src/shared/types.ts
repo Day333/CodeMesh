@@ -88,6 +88,13 @@ export interface CodeMeshApi {
   listWindows(): Promise<CodeWindow[]>;
   focusWindow(id: string): Promise<boolean>;
   tileWindow(id: string): Promise<void>;
+  prepareOverlayWindow(id: string): Promise<void>;
+  positionOverlayWindow(
+    id: string,
+    bounds: { x: number; y: number; width: number; height: number },
+  ): Promise<void>;
+  releaseOverlayWindow(id?: string): Promise<void>;
+  onOverlaySync(callback: () => void): () => void;
   openCode(path: string): Promise<void>;
   listDirectory(path: string): Promise<DirectoryResult>;
   openFile(path: string): Promise<void>;

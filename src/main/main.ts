@@ -6,9 +6,13 @@ import { Store } from "./store";
 import { TerminalManager } from "./terminals";
 import {
   focusCodeWindow,
+  hideOverlayCodeWindow,
   launchCode,
   listCodeWindows,
+  overlayCodeWindow,
   placeCodeWindow,
+  raiseOverlayCodeWindow,
+  releaseOverlayCodeWindow,
   setSessionWindowRule,
 } from "./windows";
 import type {
@@ -19,11 +23,12 @@ import type {
   WindowRule,
 } from "../shared/types";
 import { runSmoke } from "./smoke";
+import { runOverlaySmoke } from "./overlay-smoke";
 import { readEditableFile, saveEditableFile } from "./editor-files";
 
 if (process.platform !== "win32")
   throw new Error("CodeMesh 目前仅支持 Windows");
-if (process.env.CODEMESH_SMOKE_OUT) {
+if (process.env.CODEMESH_SMOKE_OUT || process.env.CODEMESH_OVERLAY_SMOKE_OUT) {
   app.setPath(
     "userData",
     fs.mkdtempSync(path.join(os.tmpdir(), "codemesh-smoke-")),
@@ -182,6 +187,63 @@ function registerIpc(): void {
       height: workArea.height,
     });
     mainWindow.focus();
+  });
+  ipcMain.handle("windows:overlay:prepare", (event, id: unknown) => {
+    if (
+      event.sender !== mainWindow?.webContents ||
+      typeof id !== "string" ||
+      !mainWindow ||
+      !refreshWindows().some((item) => item.id === id)
+    )
+      throw new Error("该 VS Code 窗口已关闭");
+    const workArea = screen.getDisplayMatching(mainWindow.getBounds()).workArea;
+    if (workArea.width < 1450 || workArea.height < 700)
+      throw new Error("当前屏幕太窄，无法同时放下完整 VS Code 和终端");
+    mainWindow.maximize();
+    mainWindow.focus();
+  });
+  ipcMain.handle(
+    "windows:overlay:position",
+    async (event, id: unknown, rect: unknown) => {
+      if (
+        event.sender !== mainWindow?.webContents ||
+        typeof id !== "string" ||
+        !mainWindow ||
+        !refreshWindows().some((item) => item.id === id) ||
+        !rect ||
+        typeof rect !== "object"
+      )
+        throw new Error("无效的 VS Code 内嵌请求");
+      const input = rect as Record<string, unknown>;
+      const { x, y, width, height } = input;
+      const content = mainWindow.getContentBounds();
+      if (
+        ![x, y, width, height].every(
+          (value) => typeof value === "number" && Number.isFinite(value),
+        ) ||
+        (x as number) < 0 ||
+        (y as number) < 0 ||
+        (width as number) < 800 ||
+        (height as number) < 450 ||
+        (x as number) + (width as number) > content.width + 2 ||
+        (y as number) + (height as number) > content.height + 2
+      )
+        throw new Error("VS Code 面板空间不足，已保留原窗口");
+      const physical = screen.dipToScreenRect(mainWindow, {
+        x: content.x + (x as number),
+        y: content.y + (y as number),
+        width: width as number,
+        height: height as number,
+      });
+      await overlayCodeWindow(id, physical);
+    },
+  );
+  ipcMain.handle("windows:overlay:release", async (event, id: unknown) => {
+    if (event.sender !== mainWindow?.webContents)
+      throw new Error("无效窗口请求");
+    if (id !== undefined && typeof id !== "string")
+      throw new Error("无效窗口请求");
+    await releaseOverlayCodeWindow(id);
   });
   ipcMain.handle("windows:rule", (_event, id: unknown, rule: WindowRule) => {
     const openWindows = refreshWindows();
@@ -348,6 +410,11 @@ function createWindow(): void {
     },
   });
   mainWindow.once("ready-to-show", () => mainWindow?.show());
+  mainWindow.on("focus", raiseOverlayCodeWindow);
+  mainWindow.on("minimize", hideOverlayCodeWindow);
+  mainWindow.on("restore", raiseOverlayCodeWindow);
+  mainWindow.on("move", () => send("windows:overlay:sync", null));
+  mainWindow.on("resize", () => send("windows:overlay:sync", null));
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   mainWindow.webContents.on("will-navigate", (event) => event.preventDefault());
   if (process.env.CODEMESH_DEV_URL)
@@ -382,6 +449,17 @@ void app.whenReady().then(() => {
       ).finally(() => app.quit());
     });
   }
+  if (process.env.CODEMESH_OVERLAY_SMOKE_OUT && mainWindow) {
+    const output = process.env.CODEMESH_OVERLAY_SMOKE_OUT;
+    mainWindow.webContents.once("did-finish-load", () => {
+      void runOverlaySmoke(
+        mainWindow!,
+        output,
+        process.env.CODEMESH_OVERLAY_SMOKE_SCREENSHOT,
+        process.env.CODEMESH_OVERLAY_SMOKE_WINDOW_ID,
+      ).finally(() => app.quit());
+    });
+  }
   setInterval(() => {
     try {
       refreshWindows();
@@ -395,7 +473,19 @@ void app.whenReady().then(() => {
   });
 });
 
-app.on("before-quit", () => {
+let overlayReleasedBeforeQuit = false;
+let overlayQuitStarted = false;
+app.on("before-quit", (event) => {
+  if (!overlayReleasedBeforeQuit) {
+    event.preventDefault();
+    if (overlayQuitStarted) return;
+    overlayQuitStarted = true;
+    void releaseOverlayCodeWindow().finally(() => {
+      overlayReleasedBeforeQuit = true;
+      app.quit();
+    });
+    return;
+  }
   terminals?.closeAll();
 });
 app.on("window-all-closed", () => app.quit());

@@ -20,7 +20,7 @@ import type {
 import { TerminalView } from "./TerminalView";
 import { EditorSurface } from "./EditorSurface";
 
-type Target = { kind: "file" | "terminal"; id: string } | null;
+type Target = { kind: "file" | "terminal" | "code"; id: string } | null;
 type Layout = "single" | "columns" | "rows";
 
 type OpenDocument = EditableFile & { savedContent: string };
@@ -37,6 +37,9 @@ export function Workspace({
   onDeleteTerminal,
   onUpdateTerminal,
   onTileWindow,
+  embedMode,
+  onEmbedCode,
+  onLeaveEmbed,
   onError,
 }: {
   windows: CodeWindow[];
@@ -57,6 +60,9 @@ export function Workspace({
     input: { title?: string; projectId?: string | null },
   ) => void;
   onTileWindow: (id: string) => Promise<void>;
+  embedMode: boolean;
+  onEmbedCode: (id: string) => Promise<void>;
+  onLeaveEmbed: () => void;
   onError: (error: unknown) => void;
 }) {
   const [layout, setLayout] = useState<Layout>("columns");
@@ -69,6 +75,10 @@ export function Workspace({
   const [newTerminalTitle, setNewTerminalTitle] = useState("");
   const savingPaths = useRef(new Set<string>());
   const wasNarrow = useRef(false);
+  const codeHost = useRef<HTMLDivElement>(null);
+  const embeddedCodeId = embedMode
+    ? panes.find((target) => target?.kind === "code")?.id
+    : null;
 
   useEffect(
     () => setNewTerminalProjectId(selectedProjectId),
@@ -196,7 +206,75 @@ export function Workspace({
     ]);
   }, [terminals]);
 
+  useEffect(() => {
+    if (!embedMode) {
+      setPanes(([left, right]) => [
+        left?.kind === "code" ? null : left,
+        right?.kind === "code" ? null : right,
+      ]);
+    }
+  }, [embedMode]);
+
+  useEffect(() => {
+    if (!embeddedCodeId || !codeHost.current) return;
+    let cancelled = false;
+    let pending = false;
+    let frame = 0;
+    const sync = () => {
+      if (cancelled || pending || !codeHost.current || document.hidden) return;
+      const rect = codeHost.current.getBoundingClientRect();
+      if (rect.width < 800 || rect.height < 450) return;
+      pending = true;
+      void window.codemesh
+        .positionOverlayWindow(embeddedCodeId, {
+          x: rect.x,
+          y: rect.y,
+          width: rect.width,
+          height: rect.height,
+        })
+        .catch((error) => {
+          if (!cancelled) {
+            onError(error);
+            onLeaveEmbed();
+          }
+        })
+        .finally(() => {
+          pending = false;
+          if (cancelled)
+            void window.codemesh
+              .releaseOverlayWindow(embeddedCodeId)
+              .catch(() => undefined);
+        });
+    };
+    const schedule = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(sync);
+    };
+    const observer = new ResizeObserver(schedule);
+    observer.observe(codeHost.current);
+    const unsubscribe = window.codemesh.onOverlaySync(schedule);
+    window.addEventListener("resize", schedule);
+    window.addEventListener("scroll", schedule, true);
+    schedule();
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+      unsubscribe();
+      window.removeEventListener("resize", schedule);
+      window.removeEventListener("scroll", schedule, true);
+      void window.codemesh
+        .releaseOverlayWindow(embeddedCodeId)
+        .catch(() => undefined);
+    };
+  }, [embeddedCodeId, onError, onLeaveEmbed]);
+
   function select(target: Target) {
+    if (embedMode && target?.kind !== "code" && activePane === 0) {
+      setPanes(([left]) => [left, target]);
+      setActivePane(1);
+      return;
+    }
     const other = activePane === 0 ? 1 : 0;
     if (
       target &&
@@ -238,6 +316,7 @@ export function Workspace({
         <div className="workspace-layout" aria-label="分屏布局">
           <button
             className={layout === "single" ? "active" : ""}
+            disabled={embedMode}
             onClick={() => {
               setLayout("single");
               setActivePane(0);
@@ -253,6 +332,7 @@ export function Workspace({
           </button>
           <button
             className={layout === "rows" ? "active" : ""}
+            disabled={embedMode}
             onClick={() => setLayout("rows")}
           >
             上下分屏
@@ -271,6 +351,28 @@ export function Workspace({
                 }
               >
                 <ExternalLink size={14} /> {item.title}
+              </button>
+              <button
+                title="将完整桌面版 VS Code 显示在工作区面板中"
+                className={embeddedCodeId === item.id ? "active" : ""}
+                onClick={() => {
+                  void onEmbedCode(item.id)
+                    .then(() => {
+                      setPanes(([, right]) => [
+                        { kind: "code", id: item.id },
+                        right?.kind === "terminal"
+                          ? right
+                          : terminals[0]
+                            ? { kind: "terminal", id: terminals[0].id }
+                            : null,
+                      ]);
+                      setLayout("columns");
+                      setActivePane(1);
+                    })
+                    .catch(onError);
+                }}
+              >
+                镶嵌
               </button>
               <button
                 title="原生 VS Code 在右侧、CodeMesh 工作区在左侧"
@@ -464,8 +566,20 @@ export function Workspace({
                   <button onClick={() => setActivePane(index)}>
                     面板 {index + 1}
                   </button>
-                  <strong title={document?.path || terminal?.cwd}>
-                    {document?.path || terminal?.title || "选择文件或终端"}
+                  <strong
+                    title={
+                      document?.path ||
+                      terminal?.cwd ||
+                      (target?.kind === "code"
+                        ? windows.find((item) => item.id === target.id)?.title
+                        : undefined)
+                    }
+                  >
+                    {document?.path ||
+                      terminal?.title ||
+                      (target?.kind === "code"
+                        ? "VS Code（原生窗口）"
+                        : "选择文件或终端")}
                   </strong>
                   {document && (
                     <button
@@ -480,6 +594,7 @@ export function Workspace({
                     <button
                       title="关闭面板显示（终端继续运行）"
                       onClick={() => {
+                        if (target?.kind === "code") onLeaveEmbed();
                         setActivePane(index);
                         setPanes((items) =>
                           index === 0 ? [null, items[1]] : [items[0], null],
@@ -490,7 +605,16 @@ export function Workspace({
                     </button>
                   )}
                 </div>
-                <div className="workspace-pane-body">
+                <div
+                  className="workspace-pane-body"
+                  ref={target?.kind === "code" ? codeHost : undefined}
+                >
+                  {target?.kind === "code" && (
+                    <div className="workspace-empty">
+                      <Code2 size={26} />
+                      <span>正在显示完整桌面版 VS Code</span>
+                    </div>
+                  )}
                   {document && (
                     <EditorSurface
                       key={document.path}
@@ -517,7 +641,7 @@ export function Workspace({
                       palette={settings.palette}
                     />
                   )}
-                  {!document && !terminal && (
+                  {!document && !terminal && target?.kind !== "code" && (
                     <div className="workspace-empty">
                       <FileText size={26} />
                       <span>从文件浏览区打开文件，或从上方选择终端</span>
