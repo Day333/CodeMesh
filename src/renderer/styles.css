@@ -1001,7 +1001,7 @@ select:focus-visible {
 }
 .workspace-panes.layout-rows {
   grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
-  height: 680px;
+  height: 520px;
 }
 .workspace-panes.layout-single {
   grid-template-columns: minmax(0, 1fr);

@@ -36,13 +36,18 @@ function CodeSurface({
       scheduled = requestAnimationFrame(() => {
         if (!host.current || disposed) return;
         const rect = host.current.getBoundingClientRect();
+        const viewport = host.current
+          .closest(".content-scroll")
+          ?.getBoundingClientRect();
         const visible =
           rect.width > 0 &&
           rect.height > 0 &&
           rect.top >= 0 &&
           rect.left >= 0 &&
           rect.bottom <= innerHeight &&
-          rect.right <= innerWidth;
+          rect.right <= innerWidth &&
+          (!viewport ||
+            (rect.top >= viewport.top && rect.bottom <= viewport.bottom));
         void window.codemesh
           .positionWindow(
             id,
@@ -60,6 +65,7 @@ function CodeSurface({
     };
     const observer = new ResizeObserver(place);
     if (host.current) observer.observe(host.current);
+    host.current?.scrollIntoView({ block: "center", inline: "nearest" });
     window.addEventListener("scroll", place, true);
     window.addEventListener("resize", place);
     void window.codemesh
