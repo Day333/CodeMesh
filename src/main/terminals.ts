@@ -34,13 +34,15 @@ export class TerminalManager {
     projectId: string | null;
     cwd: string;
     shell: ShellKind;
+    title?: string;
   }): TerminalSnapshot {
     const definition: TerminalDefinition = {
       id: randomUUID(),
       projectId: input.projectId,
       cwd: input.cwd,
       shell: input.shell,
-      title: input.shell === "cmd" ? "命令提示符" : "PowerShell",
+      title:
+        input.title || (input.shell === "cmd" ? "命令提示符" : "PowerShell"),
     };
     return this.start(definition);
   }
@@ -89,9 +91,19 @@ export class TerminalManager {
     return Array.from(this.sessions.keys()).map((id) => this.snapshot(id)!);
   }
 
+  updateMetadata(
+    id: string,
+    input: { title?: string; projectId?: string | null },
+  ): TerminalSnapshot {
+    const session = this.sessions.get(id);
+    if (!session) throw new Error("终端不存在或未能恢复");
+    session.definition = { ...session.definition, ...input };
+    return this.snapshot(id)!;
+  }
+
   write(id: string, data: string): void {
     const session = this.sessions.get(id);
-    if (!session?.alive) throw new Error("终端已退出");
+    if (!session?.alive) return;
     session.process.write(data);
   }
 

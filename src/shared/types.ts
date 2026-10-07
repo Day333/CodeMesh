@@ -101,7 +101,12 @@ export interface CodeMeshApi {
     projectId: string | null;
     cwd: string;
     shell: ShellKind;
+    title?: string;
   }): Promise<TerminalSnapshot>;
+  updateTerminal(
+    id: string,
+    input: { title?: string; projectId?: string | null },
+  ): Promise<TerminalSnapshot>;
   closeTerminal(id: string): Promise<void>;
   writeTerminal(id: string, data: string): Promise<void>;
   resizeTerminal(id: string, cols: number, rows: number): Promise<void>;

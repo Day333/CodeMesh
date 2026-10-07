@@ -12,6 +12,7 @@ import {
 import type {
   CodeWindow,
   EditableFile,
+  Project,
   Settings,
   ShellKind,
   TerminalSnapshot,
@@ -27,21 +28,34 @@ type OpenDocument = EditableFile & { savedContent: string };
 export function Workspace({
   windows,
   terminals,
+  projects,
+  selectedProjectId,
   requestedTerminalId,
   requestedFile,
   settings,
   onCreateTerminal,
-  onCloseTerminal,
+  onDeleteTerminal,
+  onUpdateTerminal,
   onTileWindow,
   onError,
 }: {
   windows: CodeWindow[];
   terminals: TerminalSnapshot[];
+  projects: Project[];
+  selectedProjectId: string | null;
   requestedTerminalId: string | null;
   requestedFile: { path: string; token: number } | null;
   settings: Settings;
-  onCreateTerminal: (shell: ShellKind) => void;
-  onCloseTerminal: (id: string) => void;
+  onCreateTerminal: (
+    shell: ShellKind,
+    projectId: string | null,
+    title?: string,
+  ) => void;
+  onDeleteTerminal: (id: string) => void;
+  onUpdateTerminal: (
+    id: string,
+    input: { title?: string; projectId?: string | null },
+  ) => void;
   onTileWindow: (id: string) => Promise<void>;
   onError: (error: unknown) => void;
 }) {
@@ -49,8 +63,17 @@ export function Workspace({
   const [panes, setPanes] = useState<[Target, Target]>([null, null]);
   const [activePane, setActivePane] = useState<0 | 1>(0);
   const [documents, setDocuments] = useState<OpenDocument[]>([]);
+  const [newTerminalProjectId, setNewTerminalProjectId] = useState<
+    string | null
+  >(selectedProjectId);
+  const [newTerminalTitle, setNewTerminalTitle] = useState("");
   const savingPaths = useRef(new Set<string>());
   const wasNarrow = useRef(false);
+
+  useEffect(
+    () => setNewTerminalProjectId(selectedProjectId),
+    [selectedProjectId],
+  );
 
   useEffect(() => {
     const adjust = () => {
@@ -299,129 +322,212 @@ export function Workspace({
           ))}
           {!documents.length && <small>从下方文件浏览区点击文件即可编辑</small>}
         </div>
-        <div className="workspace-switcher-row">
-          <span>终端</span>
-          {terminals.map((item) => (
-            <button
-              key={item.id}
-              className={
-                panes[activePane]?.kind === "terminal" &&
-                panes[activePane]?.id === item.id
-                  ? "active"
-                  : ""
-              }
-              onClick={() => select({ kind: "terminal", id: item.id })}
-            >
-              <SquareTerminal size={14} />
-              {item.title} · {item.cwd.split(/[\\/]/).filter(Boolean).at(-1)}
-            </button>
-          ))}
-          <button
-            className="workspace-add"
-            onClick={() => onCreateTerminal("powershell")}
-          >
-            <Plus size={14} /> PowerShell
-          </button>
-          <button
-            className="workspace-add"
-            onClick={() => onCreateTerminal("cmd")}
-          >
-            <Command size={14} /> cmd
-          </button>
-        </div>
       </div>
-      <div className={`workspace-panes layout-${layout}`}>
-        {([0, 1] as const).map((index) => {
-          const target = panes[index];
-          const document =
-            target?.kind === "file"
-              ? documents.find((item) => item.path === target.id)
-              : null;
-          const terminal =
-            target?.kind === "terminal"
-              ? terminals.find((item) => item.id === target.id)
-              : null;
-          return (
-            <div
-              key={index}
-              className={`workspace-pane ${activePane === index ? "selected" : ""}`}
-              onMouseDown={() => setActivePane(index)}
+      <div className="workspace-body">
+        <aside className="terminal-library" aria-label="终端列表">
+          <div className="terminal-library-heading">
+            <SquareTerminal size={15} />
+            <strong>终端列表</strong>
+            <span>{terminals.length}</span>
+          </div>
+          <div className="terminal-library-create">
+            <input
+              aria-label="新终端名称"
+              placeholder="名称（可选）"
+              maxLength={80}
+              value={newTerminalTitle}
+              onChange={(event) => setNewTerminalTitle(event.target.value)}
+            />
+            <select
+              aria-label="新终端关联项目"
+              value={newTerminalProjectId ?? ""}
+              onChange={(event) =>
+                setNewTerminalProjectId(event.target.value || null)
+              }
             >
-              <div className="workspace-pane-head">
-                <button onClick={() => setActivePane(index)}>
-                  面板 {index + 1}
+              <option value="">不关联项目</option>
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </select>
+            <div className="terminal-library-create-actions">
+              {(["powershell", "cmd"] as const).map((shell) => (
+                <button
+                  key={shell}
+                  className="workspace-add"
+                  onClick={() => {
+                    onCreateTerminal(
+                      shell,
+                      newTerminalProjectId,
+                      newTerminalTitle.trim() || undefined,
+                    );
+                    setNewTerminalTitle("");
+                  }}
+                >
+                  {shell === "cmd" ? <Command size={14} /> : <Plus size={14} />}
+                  {shell === "cmd" ? "cmd" : "PowerShell"}
                 </button>
-                <strong title={document?.path || terminal?.cwd}>
-                  {document?.path || terminal?.title || "选择文件或终端"}
-                </strong>
-                {document && (
-                  <button
-                    title="保存文件 (Ctrl+S)"
-                    disabled={document.content === document.savedContent}
-                    onClick={() => void saveDocument(document.path)}
-                  >
-                    <Save size={14} />
-                  </button>
-                )}
-                {terminal && (
-                  <button
-                    title="关闭终端"
-                    onClick={() => onCloseTerminal(terminal.id)}
-                  >
-                    <X size={14} />
-                  </button>
-                )}
-                {target && (
-                  <button
-                    title="清空面板"
-                    onClick={() => {
-                      setActivePane(index);
-                      setPanes((items) =>
-                        index === 0 ? [null, items[1]] : [items[0], null],
-                      );
-                    }}
-                  >
-                    <X size={14} />
-                  </button>
-                )}
-              </div>
-              <div className="workspace-pane-body">
-                {document && (
-                  <EditorSurface
-                    key={document.path}
-                    filename={document.path}
-                    initialContent={document.content}
-                    onChange={(content) =>
-                      setDocuments((items) =>
-                        items.map((item) =>
-                          item.path === document.path
-                            ? { ...item, content }
-                            : item,
-                        ),
-                      )
-                    }
-                    onSave={() => void saveDocument(document.path)}
-                  />
-                )}
-                {terminal && (
-                  <TerminalView
-                    snapshot={terminal}
-                    active={true}
-                    fontSize={settings.terminalFontSize}
-                    fontFamily={settings.terminalFontFamily}
-                    palette={settings.palette}
-                  />
-                )}
-                {!document && !terminal && (
-                  <div className="workspace-empty">
-                    <FileText size={26} />
-                    <span>从文件浏览区打开文件，或从上方选择终端</span>
-                  </div>
-                )}
-              </div>
+              ))}
             </div>
-          );
-        })}
+          </div>
+          <div className="terminal-library-list">
+            {terminals.map((item) => (
+              <div className="terminal-library-item" key={item.id}>
+                <button
+                  className={`terminal-library-open ${panes[activePane]?.kind === "terminal" && panes[activePane]?.id === item.id ? "active" : ""}`}
+                  title={`在选中面板打开 ${item.title}`}
+                  onClick={() => select({ kind: "terminal", id: item.id })}
+                >
+                  <span
+                    className={item.alive ? "live-dot" : "terminal-dead-dot"}
+                  />
+                  <strong>{item.title}</strong>
+                </button>
+                <input
+                  key={`${item.id}:${item.title}`}
+                  aria-label={`重命名 ${item.title}`}
+                  title="修改终端名称，按 Enter 保存"
+                  maxLength={80}
+                  defaultValue={item.title}
+                  onBlur={(event) => {
+                    const title = event.currentTarget.value.trim();
+                    if (title && title !== item.title)
+                      onUpdateTerminal(item.id, { title });
+                    else event.currentTarget.value = item.title;
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") event.currentTarget.blur();
+                    if (event.key === "Escape") {
+                      event.currentTarget.value = item.title;
+                      event.currentTarget.blur();
+                    }
+                  }}
+                />
+                <select
+                  aria-label={`${item.title} 关联项目`}
+                  title="只修改项目归类，不改变当前 shell 目录"
+                  value={item.projectId ?? ""}
+                  onChange={(event) =>
+                    onUpdateTerminal(item.id, {
+                      projectId: event.target.value || null,
+                    })
+                  }
+                >
+                  <option value="">未关联项目</option>
+                  {projects.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.name}
+                    </option>
+                  ))}
+                </select>
+                <div className="terminal-library-bottom">
+                  <small title={item.cwd}>
+                    {item.cwd.split(/[\\/]/).filter(Boolean).at(-1) || item.cwd}
+                  </small>
+                  <button
+                    title="删除并关闭终端"
+                    aria-label={`删除 ${item.title}`}
+                    onClick={() => onDeleteTerminal(item.id)}
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              </div>
+            ))}
+            {!terminals.length && (
+              <p className="terminal-library-empty">
+                新建终端后会一直列在这里。
+              </p>
+            )}
+          </div>
+        </aside>
+        <div className={`workspace-panes layout-${layout}`}>
+          {([0, 1] as const).map((index) => {
+            const target = panes[index];
+            const document =
+              target?.kind === "file"
+                ? documents.find((item) => item.path === target.id)
+                : null;
+            const terminal =
+              target?.kind === "terminal"
+                ? terminals.find((item) => item.id === target.id)
+                : null;
+            return (
+              <div
+                key={index}
+                className={`workspace-pane ${activePane === index ? "selected" : ""}`}
+                onMouseDown={() => setActivePane(index)}
+              >
+                <div className="workspace-pane-head">
+                  <button onClick={() => setActivePane(index)}>
+                    面板 {index + 1}
+                  </button>
+                  <strong title={document?.path || terminal?.cwd}>
+                    {document?.path || terminal?.title || "选择文件或终端"}
+                  </strong>
+                  {document && (
+                    <button
+                      title="保存文件 (Ctrl+S)"
+                      disabled={document.content === document.savedContent}
+                      onClick={() => void saveDocument(document.path)}
+                    >
+                      <Save size={14} />
+                    </button>
+                  )}
+                  {target && (
+                    <button
+                      title="关闭面板显示（终端继续运行）"
+                      onClick={() => {
+                        setActivePane(index);
+                        setPanes((items) =>
+                          index === 0 ? [null, items[1]] : [items[0], null],
+                        );
+                      }}
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+                <div className="workspace-pane-body">
+                  {document && (
+                    <EditorSurface
+                      key={document.path}
+                      filename={document.path}
+                      initialContent={document.content}
+                      onChange={(content) =>
+                        setDocuments((items) =>
+                          items.map((item) =>
+                            item.path === document.path
+                              ? { ...item, content }
+                              : item,
+                          ),
+                        )
+                      }
+                      onSave={() => void saveDocument(document.path)}
+                    />
+                  )}
+                  {terminal && (
+                    <TerminalView
+                      snapshot={terminal}
+                      active={true}
+                      fontSize={settings.terminalFontSize}
+                      fontFamily={settings.terminalFontFamily}
+                      palette={settings.palette}
+                    />
+                  )}
+                  {!document && !terminal && (
+                    <div className="workspace-empty">
+                      <FileText size={26} />
+                      <span>从文件浏览区打开文件，或从上方选择终端</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
       <p className="workspace-hint">
         CodeMesh 内可直接编辑并保存本地文本文件；VS Code 和 Claude Code

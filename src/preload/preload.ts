@@ -36,6 +36,8 @@ const api: CodeMeshApi = {
   saveEditableFile: (filename, content, revision) =>
     ipcRenderer.invoke("editor:save", filename, content, revision),
   createTerminal: (input) => ipcRenderer.invoke("terminal:create", input),
+  updateTerminal: (id, input) =>
+    ipcRenderer.invoke("terminal:update", id, input),
   closeTerminal: (id) => ipcRenderer.invoke("terminal:close", id),
   writeTerminal: (id, data) => ipcRenderer.invoke("terminal:write", id, data),
   resizeTerminal: (id, cols, rows) =>

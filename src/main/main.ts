@@ -123,6 +123,10 @@ function registerIpc(): void {
   ipcMain.handle("project:remove", (_event, id: unknown) => {
     if (typeof id !== "string") throw new Error("无效项目");
     const result = store.removeProject(id);
+    for (const terminal of terminals.list()) {
+      if (terminal.projectId === id)
+        terminals.updateMetadata(terminal.id, { projectId: null });
+    }
     send("state:changed", result);
     refreshWindows();
     return result;
@@ -226,17 +230,31 @@ function registerIpc(): void {
     "terminal:create",
     (
       _event,
-      input: { projectId: string | null; cwd: string; shell: ShellKind },
+      input: {
+        projectId: string | null;
+        cwd: string;
+        shell: ShellKind;
+        title?: string;
+      },
     ) => {
       if (!input || !["powershell", "cmd"].includes(input.shell))
         throw new Error("无效终端类型");
+      if (input.title !== undefined && typeof input.title !== "string")
+        throw new Error("无效终端名称");
+      const title = input.title?.trim();
+      if (title && title.length > 80) throw new Error("终端名称不能超过 80 字");
       const cwd = requireDirectory(input.cwd || os.homedir());
       const projectId =
         input.projectId &&
         store.get().projects.some((item) => item.id === input.projectId)
           ? input.projectId
           : null;
-      const snapshot = terminals.create({ projectId, cwd, shell: input.shell });
+      const snapshot = terminals.create({
+        projectId,
+        cwd,
+        shell: input.shell,
+        title,
+      });
       const state = store.addTerminal({
         id: snapshot.id,
         projectId,
@@ -245,6 +263,42 @@ function registerIpc(): void {
         title: snapshot.title,
       });
       send("state:changed", state);
+      return snapshot;
+    },
+  );
+  ipcMain.handle(
+    "terminal:update",
+    (
+      event,
+      id: unknown,
+      input: { title?: string; projectId?: string | null },
+    ) => {
+      if (
+        event.sender !== mainWindow?.webContents ||
+        typeof id !== "string" ||
+        !input ||
+        typeof input !== "object"
+      )
+        throw new Error("无效终端请求");
+      const changes: { title?: string; projectId?: string | null } = {};
+      if (input.title !== undefined) {
+        if (typeof input.title !== "string") throw new Error("无效终端名称");
+        const title = input.title.trim();
+        if (!title || title.length > 80)
+          throw new Error("终端名称需为 1 至 80 字");
+        changes.title = title;
+      }
+      if (input.projectId !== undefined) {
+        if (
+          input.projectId !== null &&
+          (typeof input.projectId !== "string" ||
+            !store.get().projects.some((item) => item.id === input.projectId))
+        )
+          throw new Error("项目不存在");
+        changes.projectId = input.projectId;
+      }
+      const snapshot = terminals.updateMetadata(id, changes);
+      send("state:changed", store.updateTerminal(id, changes));
       return snapshot;
     },
   );

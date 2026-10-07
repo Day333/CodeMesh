@@ -174,6 +174,17 @@ export class Store {
     return this.save();
   }
 
+  updateTerminal(
+    id: string,
+    input: { title?: string; projectId?: string | null },
+  ): StoredState {
+    const terminal = this.data.terminals.find((item) => item.id === id);
+    if (!terminal) throw new Error("终端不存在");
+    if (input.title !== undefined) terminal.title = input.title;
+    if (input.projectId !== undefined) terminal.projectId = input.projectId;
+    return this.save();
+  }
+
   removeTerminal(id: string): StoredState {
     this.data.terminals = this.data.terminals.filter((item) => item.id !== id);
     return this.save();

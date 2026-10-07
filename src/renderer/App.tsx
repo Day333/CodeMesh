@@ -125,7 +125,17 @@ export function App() {
   useEffect(() => {
     let mounted = true;
     const unsubWindows = window.codemesh.onWindowsChanged(setWindows);
-    const unsubState = window.codemesh.onStateChanged(setState);
+    const unsubState = window.codemesh.onStateChanged((next) => {
+      setState(next);
+      setTerminals((items) =>
+        items.flatMap((item) => {
+          const definition = next.terminals.find(
+            (terminal) => terminal.id === item.id,
+          );
+          return definition ? [{ ...item, ...definition }] : [];
+        }),
+      );
+    });
     const unsubExit = window.codemesh.onTerminalExit((id) =>
       setTerminals((items) =>
         items.map((item) =>
@@ -271,6 +281,11 @@ export function App() {
     );
     if (!next) return;
     setState(next);
+    setTerminals((items) =>
+      items.map((item) =>
+        item.projectId === project.id ? { ...item, projectId: null } : item,
+      ),
+    );
     if (selectedProjectId === project.id) {
       setSelectedProjectId(null);
       setBrowserPath(next.projects[0]?.path ?? next.favorites[0] ?? null);
@@ -292,9 +307,15 @@ export function App() {
     shell: ShellKind,
     cwd = selectedPath,
     projectId = selectedProjectId,
+    title?: string,
   ) {
     const result = await run(() =>
-      window.codemesh.createTerminal({ projectId, cwd: cwd ?? "", shell }),
+      window.codemesh.createTerminal({
+        projectId,
+        cwd: cwd ?? "",
+        shell,
+        title,
+      }),
     );
     if (result) {
       setTerminals((items) => [...items, result]);
@@ -302,12 +323,31 @@ export function App() {
     }
   }
 
-  async function closeTerminal(id: string) {
-    await run(() => window.codemesh.closeTerminal(id));
-    setTerminals((items) => {
-      const next = items.filter((item) => item.id !== id);
-      return next;
-    });
+  async function deleteTerminal(id: string) {
+    const terminal = terminals.find((item) => item.id === id);
+    if (
+      !window.confirm(
+        `删除终端“${terminal?.title ?? "终端"}”？这会结束当前 shell；项目关联和名称也会移除。`,
+      )
+    )
+      return;
+    try {
+      await window.codemesh.closeTerminal(id);
+      setTerminals((items) => items.filter((item) => item.id !== id));
+    } catch (error) {
+      reportError(error);
+    }
+  }
+
+  async function updateTerminal(
+    id: string,
+    input: { title?: string; projectId?: string | null },
+  ) {
+    const updated = await run(() => window.codemesh.updateTerminal(id, input));
+    if (updated)
+      setTerminals((items) =>
+        items.map((item) => (item.id === id ? updated : item)),
+      );
   }
 
   function selectProject(project: Project) {
@@ -568,11 +608,24 @@ export function App() {
             <Workspace
               windows={windows}
               terminals={terminals}
+              projects={state.projects}
+              selectedProjectId={selectedProjectId}
               requestedTerminalId={requestedTerminalId}
               requestedFile={requestedFile}
               settings={state.settings}
-              onCreateTerminal={(shell) => void addTerminal(shell)}
-              onCloseTerminal={(id) => void closeTerminal(id)}
+              onCreateTerminal={(shell, projectId, title) => {
+                const project = state.projects.find(
+                  (item) => item.id === projectId,
+                );
+                void addTerminal(
+                  shell,
+                  project?.path ?? selectedPath,
+                  projectId,
+                  title,
+                );
+              }}
+              onDeleteTerminal={(id) => void deleteTerminal(id)}
+              onUpdateTerminal={(id, input) => void updateTerminal(id, input)}
               onTileWindow={async (id) => {
                 await window.codemesh.tileWindow(id);
                 setFocusMode(true);

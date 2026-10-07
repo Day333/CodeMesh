@@ -53,7 +53,6 @@ export async function runSmoke(
         if (windowRule?.projectId !== addedProject.id || windowRule.role !== 'view') throw new Error('Window rule was not applied');
       }
       await api.removeFavorite(${JSON.stringify(cwd)});
-      await api.removeProject(addedProject.id);
       async function checkShell(shell, command, marker) {
         const session = await api.createTerminal({ projectId: null, cwd: ${JSON.stringify(cwd)}, shell });
         let unsubscribe;
@@ -81,6 +80,14 @@ export async function runSmoke(
       await new Promise(resolve => setTimeout(resolve, 150));
       if (!document.querySelector('.workspace-panes.layout-rows')) throw new Error('Rows layout did not activate');
       const knownTerminals = new Set((await api.bootstrap()).terminals.map(item => item.id));
+      const newName = document.querySelector('input[aria-label="新终端名称"]');
+      const newProject = document.querySelector('select[aria-label="新终端关联项目"]');
+      if (!newName || !newProject) throw new Error('New terminal metadata fields missing');
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(newName, 'Initial terminal');
+      newName.dispatchEvent(new Event('input', { bubbles: true }));
+      newProject.value = addedProject.id;
+      newProject.dispatchEvent(new Event('change', { bubbles: true }));
+      await new Promise(resolve => setTimeout(resolve, 100));
       const newTerminal = document.querySelector('.workspace-add');
       if (!newTerminal || newTerminal.disabled) throw new Error('New terminal button unavailable without a project');
       newTerminal.click();
@@ -91,11 +98,26 @@ export async function runSmoke(
         await new Promise(resolve => setTimeout(resolve, 250));
       }
       if (!createdTerminal || !document.querySelector('.workspace-pane.selected .terminal-host')) throw new Error('New terminal did not appear in a pane');
+      if (createdTerminal.title !== 'Initial terminal' || createdTerminal.projectId !== addedProject.id) throw new Error('New terminal metadata was not applied');
       if (!document.querySelector('.workspace-pane:first-child .editor-host')) throw new Error('Editor was lost while opening split terminal');
-      const closeTerminalButton = document.querySelector('.workspace-pane.selected button[title="关闭终端"]');
-      if (!closeTerminalButton) throw new Error('Terminal close button missing');
-      closeTerminalButton.click();
-      return { heading, fontFamily: bootstrap.state.settings.terminalFontFamily, windows: bootstrap.windows.length, windowRuleApplied: !!windowRule, directoryPath: directory.path, directoryEntries: directory.entries.length, hasPackageJson: directory.entries.some(item => item.name === 'package.json'), editorFile: editorFile.path, powershell, cmd, defaultTerminal: defaultTerminal.cwd, uiTerminal: createdTerminal.cwd };
+      const renamedTerminal = await api.updateTerminal(createdTerminal.id, { title: 'Smoke terminal', projectId: addedProject.id });
+      if (renamedTerminal.title !== 'Smoke terminal' || renamedTerminal.projectId !== addedProject.id) throw new Error('Terminal metadata did not update');
+      const savedTerminal = (await api.bootstrap()).state.terminals.find(item => item.id === createdTerminal.id);
+      if (savedTerminal?.title !== 'Smoke terminal' || savedTerminal.projectId !== addedProject.id) throw new Error('Terminal metadata was not persisted');
+      const hidePaneButton = document.querySelector('.workspace-pane.selected button[title="关闭面板显示（终端继续运行）"]');
+      if (!hidePaneButton) throw new Error('Hide pane button missing');
+      hidePaneButton.click();
+      if (!(await api.bootstrap()).terminals.some(item => item.id === createdTerminal.id)) throw new Error('Hiding a pane deleted its terminal');
+      const reopenButton = [...document.querySelectorAll('.terminal-library-open')].find(item => item.title.includes('Smoke terminal'));
+      if (!reopenButton) throw new Error('Terminal missing from persistent list');
+      reopenButton.click();
+      for (let attempt = 0; attempt < 40 && !document.querySelector('.workspace-pane.selected .terminal-host'); attempt++) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      if (!document.querySelector('.workspace-pane.selected .terminal-host')) throw new Error('Terminal did not reopen from list');
+      await api.closeTerminal(createdTerminal.id);
+      await api.removeProject(addedProject.id);
+      return { heading, fontFamily: bootstrap.state.settings.terminalFontFamily, windows: bootstrap.windows.length, windowRuleApplied: !!windowRule, directoryPath: directory.path, directoryEntries: directory.entries.length, hasPackageJson: directory.entries.some(item => item.name === 'package.json'), editorFile: editorFile.path, powershell, cmd, defaultTerminal: defaultTerminal.cwd, uiTerminal: createdTerminal.cwd, terminalRenamed: renamedTerminal.title };
     })()`);
     fs.writeFileSync(
       output,
