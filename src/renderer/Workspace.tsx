@@ -48,6 +48,19 @@ export function Workspace({
   const [activePane, setActivePane] = useState<0 | 1>(0);
   const [documents, setDocuments] = useState<OpenDocument[]>([]);
   const savingPaths = useRef(new Set<string>());
+  const wasNarrow = useRef(false);
+
+  useEffect(() => {
+    const adjust = () => {
+      const narrow = window.innerWidth <= 950;
+      if (narrow && !wasNarrow.current)
+        setLayout((current) => (current === "columns" ? "rows" : current));
+      wasNarrow.current = narrow;
+    };
+    adjust();
+    window.addEventListener("resize", adjust);
+    return () => window.removeEventListener("resize", adjust);
+  }, []);
 
   const saveDocument = useCallback(
     async (filename: string) => {
