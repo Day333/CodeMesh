@@ -1,4 +1,11 @@
-import { app, BrowserWindow, dialog, ipcMain, screen, shell } from "electron";
+import {
+  app,
+  BrowserWindow,
+  desktopCapturer,
+  dialog,
+  ipcMain,
+  shell,
+} from "electron";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -6,19 +13,13 @@ import { Store } from "./store";
 import { TerminalManager } from "./terminals";
 import {
   focusCodeWindow,
-  embedCodeWindow,
   launchCode,
   listCodeWindows,
-  positionCodeWindow,
-  releaseAllCodeWindows,
-  releaseCodeWindow,
-  restoreEmbeddedVisibility,
   setSessionWindowRule,
 } from "./windows";
 import type {
   CodeWindow,
   DirectoryResult,
-  EmbedBounds,
   Settings,
   ShellKind,
   WindowRule,
@@ -152,49 +153,21 @@ function registerIpc(): void {
     "windows:focus",
     (_event, id: unknown) => typeof id === "string" && focusCodeWindow(id),
   );
-  ipcMain.handle("windows:embed", (event, id: unknown) => {
+  ipcMain.handle("windows:capture-source", async (event, id: unknown) => {
     if (event.sender !== mainWindow?.webContents || typeof id !== "string")
       throw new Error("无效窗口请求");
-    embedCodeWindow(id, mainWindow.getNativeWindowHandle().readBigUInt64LE());
-    refreshWindows();
-  });
-  ipcMain.handle(
-    "windows:position",
-    (event, id: unknown, bounds: EmbedBounds | null) => {
-      if (event.sender !== mainWindow?.webContents || typeof id !== "string")
-        throw new Error("无效窗口请求");
-      if (bounds !== null) {
-        const content = mainWindow.getContentBounds();
-        if (
-          !bounds ||
-          ![bounds.x, bounds.y, bounds.width, bounds.height].every(
-            Number.isFinite,
-          ) ||
-          bounds.x < 0 ||
-          bounds.y < 0 ||
-          bounds.width < 1 ||
-          bounds.height < 1 ||
-          bounds.x + bounds.width > content.width + 1 ||
-          bounds.y + bounds.height > content.height + 1
-        )
-          throw new Error("嵌入区域超出应用窗口");
-        const scale = screen.getDisplayMatching(
-          mainWindow.getBounds(),
-        ).scaleFactor;
-        positionCodeWindow(id, {
-          x: bounds.x * scale,
-          y: bounds.y * scale,
-          width: bounds.width * scale,
-          height: bounds.height * scale,
-        });
-      } else positionCodeWindow(id, null);
-    },
-  );
-  ipcMain.handle("windows:release", (event, id: unknown) => {
-    if (event.sender !== mainWindow?.webContents || typeof id !== "string")
-      throw new Error("无效窗口请求");
-    releaseCodeWindow(id);
-    refreshWindows();
+    if (!refreshWindows().some((item) => item.id === id))
+      throw new Error("该 VS Code 窗口已关闭");
+    const sources = await desktopCapturer.getSources({
+      types: ["window"],
+      thumbnailSize: { width: 0, height: 0 },
+    });
+    const source = sources.find((item) => {
+      const match = /^window:(\d+):\d+$/.exec(item.id);
+      return match && BigInt(match[1]) === BigInt(id);
+    });
+    if (!source) throw new Error("Windows 未提供该窗口的画面预览");
+    return source.id;
   });
   ipcMain.handle("windows:rule", (_event, id: unknown, rule: WindowRule) => {
     const openWindows = refreshWindows();
@@ -230,7 +203,7 @@ function registerIpc(): void {
     ) => {
       if (!input || !["powershell", "cmd"].includes(input.shell))
         throw new Error("无效终端类型");
-      const cwd = requireDirectory(input.cwd);
+      const cwd = requireDirectory(input.cwd || os.homedir());
       const projectId =
         input.projectId &&
         store.get().projects.some((item) => item.id === input.projectId)
@@ -296,12 +269,6 @@ function createWindow(): void {
   mainWindow.once("ready-to-show", () => mainWindow?.show());
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   mainWindow.webContents.on("will-navigate", (event) => event.preventDefault());
-  mainWindow.on("minimize", () => {
-    for (const item of listCodeWindows(store.get()))
-      if (item.embedded) positionCodeWindow(item.id, null);
-  });
-  mainWindow.on("restore", () => restoreEmbeddedVisibility());
-  mainWindow.on("close", () => releaseAllCodeWindows());
   if (process.env.CODEMESH_DEV_URL)
     void mainWindow.loadURL(process.env.CODEMESH_DEV_URL);
   else
@@ -349,7 +316,6 @@ void app.whenReady().then(() => {
 });
 
 app.on("before-quit", () => {
-  releaseAllCodeWindows();
   terminals?.closeAll();
 });
 app.on("window-all-closed", () => app.quit());

@@ -1,11 +1,6 @@
 import fs from "node:fs";
 import type { BrowserWindow } from "electron";
-import {
-  closeSmokeCodeWindow,
-  launchCode,
-  listCodeWindows,
-  releaseCodeWindow,
-} from "./windows";
+import { closeSmokeCodeWindow, launchCode, listCodeWindows } from "./windows";
 import type { Store } from "./store";
 
 /** Runs against the actual packaged renderer and preload bridge. */
@@ -72,21 +67,25 @@ export async function runSmoke(
       }
       const powershell = await checkShell('powershell', "Write-Output ('CM_' + 'POWERSHELL_OK')", 'CM_POWERSHELL_OK');
       const cmd = await checkShell('cmd', 'echo CM_CMD_OK', 'CM_CMD_OK');
-      let embed = null;
+      const defaultTerminal = await api.createTerminal({ projectId: null, cwd: '', shell: 'cmd' });
+      if (!defaultTerminal.alive || !defaultTerminal.cwd) throw new Error('Default terminal directory unavailable');
+      await api.closeTerminal(defaultTerminal.id);
+      let preview = null;
       if (${JSON.stringify(scratchId)} !== null) {
         const id = ${JSON.stringify(scratchId)};
-        await api.embedWindow(id);
-        await api.positionWindow(id, { x: 300, y: 150, width: 420, height: 320 });
-        const hosted = (await api.listWindows()).find(item => item.id === id);
-        await api.releaseWindow(id);
-        const released = (await api.listWindows()).find(item => item.id === id);
-        if (!hosted?.embedded || released?.embedded) throw new Error('VS Code embed/release failed');
+        const sourceId = await api.captureWindow(id);
+        if (!sourceId.startsWith('window:')) throw new Error('VS Code capture source missing');
         const switchButton = document.querySelector('[data-window-id="' + id + '"]');
         if (!switchButton) throw new Error('VS Code switch button missing');
         switchButton.click();
-        await new Promise(resolve => setTimeout(resolve, 450));
-        const uiHosted = (await api.listWindows()).find(item => item.id === id);
-        if (!uiHosted?.embedded) throw new Error('VS Code was not embedded from the UI');
+        let video = null;
+        for (let attempt = 0; attempt < 40; attempt++) {
+          video = document.querySelector('.workspace-pane.selected video');
+          if (video?.videoWidth > 0 && video?.videoHeight > 0) break;
+          await new Promise(resolve => setTimeout(resolve, 250));
+        }
+        if (!video?.videoWidth || !video?.videoHeight) throw new Error('VS Code live preview did not render');
+        await new Promise(resolve => setTimeout(resolve, ${Number(process.env.CODEMESH_SMOKE_VIEW_MS || 0)}));
         const layoutButtons = document.querySelectorAll('.workspace-layout button');
         layoutButtons[2]?.click();
         await new Promise(resolve => setTimeout(resolve, 150));
@@ -94,12 +93,25 @@ export async function runSmoke(
         const clear = document.querySelector('.workspace-pane.selected button[title="清空面板"]');
         if (!clear) throw new Error('Clear pane control missing');
         clear.click();
-        await new Promise(resolve => setTimeout(resolve, 450));
-        const uiReleased = (await api.listWindows()).find(item => item.id === id);
-        if (uiReleased?.embedded) throw new Error('VS Code was not released from the UI');
-        embed = { hosted: hosted.embedded, released: released.embedded, uiHosted: uiHosted.embedded, uiReleased: uiReleased.embedded, title: hosted.title };
+        await new Promise(resolve => setTimeout(resolve, 150));
+        if (document.querySelector('.workspace-pane.selected video')) throw new Error('VS Code preview was not cleared');
+        preview = { sourceId, width: video.videoWidth, height: video.videoHeight };
       }
-      return { heading, windows: bootstrap.windows.length, windowRuleApplied: !!windowRule, directoryPath: directory.path, directoryEntries: directory.entries.length, hasPackageJson: directory.entries.some(item => item.name === 'package.json'), powershell, cmd, embed };
+      const knownTerminals = new Set((await api.bootstrap()).terminals.map(item => item.id));
+      const newTerminal = document.querySelector('.workspace-add');
+      if (!newTerminal || newTerminal.disabled) throw new Error('New terminal button unavailable without a project');
+      newTerminal.click();
+      let createdTerminal = null;
+      for (let attempt = 0; attempt < 40; attempt++) {
+        createdTerminal = (await api.bootstrap()).terminals.find(item => !knownTerminals.has(item.id));
+        if (createdTerminal && document.querySelector('.workspace-pane.selected .terminal-host')) break;
+        await new Promise(resolve => setTimeout(resolve, 250));
+      }
+      if (!createdTerminal || !document.querySelector('.workspace-pane.selected .terminal-host')) throw new Error('New terminal did not appear in a pane');
+      const closeTerminalButton = document.querySelector('.workspace-pane.selected button[title="关闭终端"]');
+      if (!closeTerminalButton) throw new Error('Terminal close button missing');
+      closeTerminalButton.click();
+      return { heading, windows: bootstrap.windows.length, windowRuleApplied: !!windowRule, directoryPath: directory.path, directoryEntries: directory.entries.length, hasPackageJson: directory.entries.some(item => item.name === 'package.json'), powershell, cmd, defaultTerminal: defaultTerminal.cwd, uiTerminal: createdTerminal.cwd, preview };
     })()`);
     fs.writeFileSync(
       output,
@@ -114,7 +126,6 @@ export async function runSmoke(
     );
   } finally {
     if (scratchId) {
-      releaseCodeWindow(scratchId);
       closeSmokeCodeWindow(scratchId);
     }
   }

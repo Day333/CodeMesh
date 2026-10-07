@@ -25,84 +25,75 @@ function CodeSurface({
   id: string;
   onError: (error: unknown) => void;
 }) {
-  const host = useRef<HTMLDivElement>(null);
+  const video = useRef<HTMLVideoElement>(null);
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
     let disposed = false;
-    let attached = false;
-    let scheduled = 0;
-    const place = () => {
-      if (!attached || !host.current || disposed) return;
-      cancelAnimationFrame(scheduled);
-      scheduled = requestAnimationFrame(() => {
-        if (!host.current || disposed) return;
-        const rect = host.current.getBoundingClientRect();
-        const viewport = host.current
-          .closest(".content-scroll")
-          ?.getBoundingClientRect();
-        const visible =
-          rect.width > 0 &&
-          rect.height > 0 &&
-          rect.top >= 0 &&
-          rect.left >= 0 &&
-          rect.bottom <= innerHeight &&
-          rect.right <= innerWidth &&
-          (!viewport ||
-            (rect.top >= viewport.top && rect.bottom <= viewport.bottom));
-        void window.codemesh
-          .positionWindow(
-            id,
-            visible
-              ? {
-                  x: rect.left,
-                  y: rect.top,
-                  width: rect.width,
-                  height: rect.height,
-                }
-              : null,
-          )
-          .catch(onError);
-      });
-    };
-    const observer = new ResizeObserver(place);
-    if (host.current) observer.observe(host.current);
-    host.current?.scrollIntoView({ block: "center", inline: "nearest" });
-    window.addEventListener("scroll", place, true);
-    window.addEventListener("resize", place);
+    let stream: MediaStream | null = null;
+    setFailed(false);
     void window.codemesh
-      .embedWindow(id)
-      .then(() => {
-        attached = true;
-        if (disposed) void window.codemesh.releaseWindow(id).catch(onError);
-        else place();
+      .captureWindow(id)
+      .then((sourceId) =>
+        navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {
+            mandatory: {
+              chromeMediaSource: "desktop",
+              chromeMediaSourceId: sourceId,
+            },
+          } as unknown as MediaTrackConstraints,
+        }),
+      )
+      .then((captured) => {
+        if (disposed) {
+          captured.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        stream = captured;
+        if (video.current) {
+          video.current.srcObject = captured;
+          void video.current.play().catch(onError);
+        }
       })
-      .catch(onError);
+      .catch((error) => {
+        if (!disposed) {
+          setFailed(true);
+          onError(error);
+        }
+      });
     return () => {
       disposed = true;
-      cancelAnimationFrame(scheduled);
-      observer.disconnect();
-      window.removeEventListener("scroll", place, true);
-      window.removeEventListener("resize", place);
-      if (attached) void window.codemesh.releaseWindow(id).catch(onError);
+      stream?.getTracks().forEach((track) => track.stop());
+      if (video.current) video.current.srcObject = null;
     };
   }, [id, onError]);
   return (
-    <div ref={host} className="code-surface" aria-label="嵌入的 VS Code 窗口" />
+    <div className="code-surface" aria-label="VS Code 实时预览">
+      {failed ? (
+        <div className="workspace-empty">预览暂不可用，请在 VS Code 中打开</div>
+      ) : (
+        <video ref={video} autoPlay muted playsInline />
+      )}
+      <span className="code-preview-label">
+        实时预览 · 编辑请用面板右上角按钮
+      </span>
+    </div>
   );
 }
 
 export function Workspace({
   windows,
   terminals,
+  requestedTerminalId,
   settings,
-  selectedPath,
   onCreateTerminal,
   onCloseTerminal,
   onError,
 }: {
   windows: CodeWindow[];
   terminals: TerminalSnapshot[];
+  requestedTerminalId: string | null;
   settings: Settings;
-  selectedPath: string | null;
   onCreateTerminal: (shell: ShellKind) => void;
   onCloseTerminal: (id: string) => void;
   onError: (error: unknown) => void;
@@ -110,6 +101,24 @@ export function Workspace({
   const [layout, setLayout] = useState<Layout>("columns");
   const [panes, setPanes] = useState<[Target, Target]>([null, null]);
   const [activePane, setActivePane] = useState<0 | 1>(0);
+
+  useEffect(() => {
+    if (!requestedTerminalId) return;
+    const destination: 0 | 1 =
+      panes[activePane] && !panes[activePane === 0 ? 1 : 0]
+        ? activePane === 0
+          ? 1
+          : 0
+        : activePane;
+    setPanes((items) => {
+      const next: [Target, Target] = [...items];
+      next[destination] = { kind: "terminal", id: requestedTerminalId };
+      return next;
+    });
+    setActivePane(destination);
+    // A new requested ID is a one-shot navigation action.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedTerminalId]);
 
   useEffect(() => {
     setPanes(([left, right]) => [
@@ -203,7 +212,7 @@ export function Workspace({
               {item.title}
             </button>
           ))}
-          {!windows.length && <small>暂无窗口；从项目新建后可嵌入</small>}
+          {!windows.length && <small>暂无窗口；从项目新建后可预览</small>}
         </div>
         <div className="workspace-switcher-row">
           <span>终端</span>
@@ -224,14 +233,12 @@ export function Workspace({
           ))}
           <button
             className="workspace-add"
-            disabled={!selectedPath}
             onClick={() => onCreateTerminal("powershell")}
           >
             <Plus size={14} /> PowerShell
           </button>
           <button
             className="workspace-add"
-            disabled={!selectedPath}
             onClick={() => onCreateTerminal("cmd")}
           >
             <Command size={14} /> cmd
@@ -264,18 +271,10 @@ export function Workspace({
                 </strong>
                 {code && (
                   <button
-                    title="还原为独立窗口"
-                    onClick={() => {
-                      void window.codemesh
-                        .releaseWindow(code.id)
-                        .then(() => {
-                          setPanes((items) =>
-                            index === 0 ? [null, items[1]] : [items[0], null],
-                          );
-                          void window.codemesh.focusWindow(code.id);
-                        })
-                        .catch(onError);
-                    }}
+                    title="在 VS Code 中编辑"
+                    onClick={() =>
+                      void window.codemesh.focusWindow(code.id).catch(onError)
+                    }
                   >
                     <ExternalLink size={14} />
                   </button>
@@ -325,7 +324,8 @@ export function Workspace({
         })}
       </div>
       <p className="workspace-hint">
-        VS Code 会暂时嵌入面板；清空面板或关闭 CodeMesh 后，它会恢复为独立窗口。
+        VS Code
+        在面板中显示实时预览；点击面板右上角按钮可切换到原窗口编辑。终端可直接输入。
       </p>
     </section>
   );

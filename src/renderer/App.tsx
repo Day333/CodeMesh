@@ -69,6 +69,9 @@ export function App() {
   const [state, setState] = useState<StoredState | null>(null);
   const [windows, setWindows] = useState<CodeWindow[]>([]);
   const [terminals, setTerminals] = useState<TerminalSnapshot[]>([]);
+  const [requestedTerminalId, setRequestedTerminalId] = useState<string | null>(
+    null,
+  );
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
     null,
   );
@@ -285,15 +288,12 @@ export function App() {
     cwd = selectedPath,
     projectId = selectedProjectId,
   ) {
-    if (!cwd) {
-      notify("请先选择项目或文件夹");
-      return;
-    }
     const result = await run(() =>
-      window.codemesh.createTerminal({ projectId, cwd, shell }),
+      window.codemesh.createTerminal({ projectId, cwd: cwd ?? "", shell }),
     );
     if (result) {
       setTerminals((items) => [...items, result]);
+      setRequestedTerminalId(result.id);
     }
   }
 
@@ -553,8 +553,8 @@ export function App() {
             <Workspace
               windows={windows}
               terminals={terminals}
+              requestedTerminalId={requestedTerminalId}
               settings={state.settings}
-              selectedPath={selectedPath}
               onCreateTerminal={(shell) => void addTerminal(shell)}
               onCloseTerminal={(id) => void closeTerminal(id)}
               onError={reportError}
