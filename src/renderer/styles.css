@@ -1333,6 +1333,7 @@ select:focus-visible {
 .app.focus-mode .welcome,
 .app.focus-mode .stats,
 .app.focus-mode .panels,
+.app.focus-mode .footer,
 .app.focus-mode .workspace-hint {
   display: none;
 }
@@ -1341,12 +1342,17 @@ select:focus-visible {
 }
 .app.focus-mode .content-wrap {
   height: 100%;
+  width: 100%;
+  min-width: 0;
   max-width: none;
+  margin: 0;
   padding: 8px;
   display: flex;
 }
 .app.focus-mode .workspace {
   flex: 1;
+  width: 100%;
+  min-width: 0;
   min-height: 0;
   margin: 0;
   display: flex;
@@ -1359,6 +1365,8 @@ select:focus-visible {
 }
 .app.focus-mode .workspace-body {
   flex: 1;
+  width: 100%;
+  min-width: 0;
   height: auto;
 }
 .terminal-blank {

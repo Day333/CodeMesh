@@ -370,7 +370,7 @@ export function Workspace({
                 <ExternalLink size={14} /> {item.title}
               </button>
               <button
-                title="将完整桌面版 VS Code 显示在工作区面板中"
+                title="把独立的 VS Code 窗口贴合到面板位置（非真正内嵌）"
                 className={embeddedCodeId === item.id ? "active" : ""}
                 onClick={() => {
                   void onEmbedCode(item.id)
@@ -389,7 +389,7 @@ export function Workspace({
                     .catch(onError);
                 }}
               >
-                镶嵌
+                贴合
               </button>
               <button
                 title="原生 VS Code 在右侧、CodeMesh 工作区在左侧"

@@ -9,6 +9,7 @@ export async function runSmoke(
   cwd: string,
 ): Promise<void> {
   try {
+    window.maximize();
     const result = await window.webContents.executeJavaScript(`(async () => {
       const api = window.codemesh;
       await new Promise(resolve => setTimeout(resolve, 300));
@@ -22,6 +23,13 @@ export async function runSmoke(
       sidebarToggle.click();
       await new Promise(resolve => setTimeout(resolve, 80));
       if (document.querySelector('.app.sidebar-collapsed') || getComputedStyle(document.querySelector('.sidebar')).display === 'none') throw new Error('Sidebar did not expand');
+      const appRoot = document.querySelector('.app');
+      appRoot.classList.add('focus-mode', 'embed-mode');
+      await new Promise(resolve => setTimeout(resolve, 100));
+      const mainWidth = document.querySelector('.main').getBoundingClientRect().width;
+      const workspaceWidth = document.querySelector('.workspace').getBoundingClientRect().width;
+      if (workspaceWidth < mainWidth - 30) throw new Error('Maximized workspace did not fill the available width: ' + JSON.stringify({ mainWidth, workspaceWidth, scrollWidth: document.querySelector('.content-scroll').getBoundingClientRect().width, wrapWidth: document.querySelector('.content-wrap').getBoundingClientRect().width, bodyWidth: document.querySelector('.workspace-body').getBoundingClientRect().width, appWidth: appRoot.getBoundingClientRect().width }));
+      appRoot.classList.remove('focus-mode', 'embed-mode');
       if (!bootstrap.state.settings.terminalFontFamily.includes('MesloLGM Nerd Font Mono')) throw new Error('Nerd Font default not applied');
       const directory = await api.listDirectory(${JSON.stringify(cwd)});
       const withProject = await api.addProject(${JSON.stringify(cwd)});
@@ -66,7 +74,7 @@ export async function runSmoke(
           if (ownWindow) break;
           await new Promise(resolve => setTimeout(resolve, 100));
         }
-        if (!ownWindow?.querySelector('button[title="将完整桌面版 VS Code 显示在工作区面板中"]')) throw new Error('Associated VS Code was not offered to its project');
+        if (!ownWindow?.querySelector('button[title="把独立的 VS Code 窗口贴合到面板位置（非真正内嵌）"]')) throw new Error('Associated VS Code was not offered to its project');
         const otherPath = ${JSON.stringify(path.join(cwd, "src"))};
         const otherState = await api.addProject(otherPath);
         const otherProject = otherState.projects.find(item => item.path.toLowerCase() === otherPath.toLowerCase());

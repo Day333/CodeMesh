@@ -32,7 +32,7 @@ export async function runOverlaySmoke(
         if (row) break;
         await new Promise(resolve => setTimeout(resolve, 100));
       }
-      const button = row?.querySelector('button[title="将完整桌面版 VS Code 显示在工作区面板中"]');
+      const button = row?.querySelector('button[title="把独立的 VS Code 窗口贴合到面板位置（非真正内嵌）"]');
       if (!button) throw new Error('Embed button missing');
       button.click();
       return code.id;
@@ -48,7 +48,7 @@ export async function runOverlaySmoke(
         className: document.querySelector('.app')?.className,
         toast: document.querySelector('.toast')?.textContent,
         codePane: document.querySelector('.workspace-pane-body')?.getBoundingClientRect().toJSON(),
-        codeButtons: [...document.querySelectorAll('button[title="将完整桌面版 VS Code 显示在工作区面板中"]')].length
+        codeButtons: [...document.querySelectorAll('button[title="把独立的 VS Code 窗口贴合到面板位置（非真正内嵌）"]')].length
       })`);
       throw new Error(
         `VS Code was not positioned over its workspace pane: ${JSON.stringify(diagnostic)}`,
